@@ -117,7 +117,7 @@ def append_message(session_id: str, role: str, content: str) -> None:
 # ── watches ──────────────────────────────────────────────────────────────────
 
 def create_watch(
-    task: str, cadence_sec: int = 120, act_mode: str = "off", user_id: str = DEFAULT_USER
+    task: str, cadence_sec: int = 3600, act_mode: str = "off", user_id: str = DEFAULT_USER
 ) -> dict:
     session_id = create_session(kind="watch", title=task[:80], user_id=user_id)
     # act_mode controls what a watch does on a genuine match:

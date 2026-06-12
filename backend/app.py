@@ -433,6 +433,54 @@ def onboarding_turn(body: OnboardingIn, user_id: str = Depends(current_user)):
     return {"session_id": session_id, "reply": reply, "written": planted}
 
 
+# ── onboarding basics (structured fields → deterministic vault plant) ───────
+
+
+class OnboardingBasicsIn(BaseModel):
+    name: str | None = None
+    zip: str | None = None
+
+
+def _plant_basic(path: str, topic: str, fact: str, user_id: str) -> dict:
+    """Deterministically append a provenance-suffixed bullet to a basics vault
+    file, preserving frontmatter (creating it if the file is new). Bypasses the
+    GLiNER/LLM extractor — these are structured fields, not fuzzy text."""
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    bullet = f"- {fact} (src: onboarding {today})"
+    try:
+        content = vault.read(path, user_id=user_id)
+    except (FileNotFoundError, ValueError):
+        content = f"---\ntopic: {topic}\nupdated: {today}\n---\n"
+    if bullet not in content:
+        import re as _re2
+
+        content = _re2.sub(r"(?m)^updated:.*$", f"updated: {today}", content, count=1)
+        content = content.rstrip("\n") + "\n" + bullet + "\n"
+        vault.write(path, content, source="onboarding", user_id=user_id)
+    return {"topic": topic, "fact": fact}
+
+
+@app.post("/onboarding/basics")
+def onboarding_basics(body: OnboardingBasicsIn, user_id: str = Depends(current_user)):
+    """Plant the two structured onboarding basics (name, zip) deterministically.
+
+    Structured fields go straight to the vault — NOT through the GLiNER/LLM
+    distiller (which trips a housing path on "zip" and has no "name" label).
+    Returns {"planted": [{topic, fact}, ...]} mirroring /distill's shape."""
+    planted = []
+    if body.name and body.name.strip():
+        planted.append(
+            _plant_basic("preferences/identity.md", "identity", f"Name is {body.name.strip()}", user_id)
+        )
+    if body.zip and body.zip.strip():
+        planted.append(
+            _plant_basic("preferences/location.md", "location", f"Lives in {body.zip.strip()}", user_id)
+        )
+    return {"planted": planted}
+
+
 # ── distill (onboarding + any free text → preference vault) ─────────────────
 
 class DistillIn(BaseModel):

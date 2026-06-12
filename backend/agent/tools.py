@@ -76,7 +76,7 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "task": {"type": "string", "description": "What to watch, in plain language, including sources if known"},
-                "cadence_sec": {"type": "integer", "description": "Seconds between cycles (default 120)"},
+                "cadence_sec": {"type": "integer", "description": "Seconds between cycles (default 3600 = hourly; user can change per watch, up to once a day). Don't go below 300."},
                 "act_mode": {
                     "type": "string",
                     "enum": ["off", "calendar", "discord"],
@@ -157,7 +157,7 @@ def _dispatch(name: str, tool_input: dict, session_id: str, user_id: str) -> str
     if name == "spawn_watch":
         return _spawn_watch(
             tool_input["task"],
-            int(tool_input.get("cadence_sec") or 120),
+            int(tool_input.get("cadence_sec") or 3600),
             session_id,
             user_id,
             act_mode=tool_input.get("act_mode") or "off",
