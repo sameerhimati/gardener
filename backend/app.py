@@ -57,6 +57,7 @@ app.add_middleware(
 class ChatIn(BaseModel):
     session_id: str | None = None
     message: str
+    image: str | None = None  # optional data: URI for a dropped/pasted image
 
 
 class WatchIn(BaseModel):
@@ -73,14 +74,16 @@ class WatchPatch(BaseModel):
     cadence_sec: int | None = None
 
 
-def _run_turn(session_id: str, message: str, system: str | None = None) -> str:
+def _run_turn(
+    session_id: str, message: str, system: str | None = None, image: str | None = None
+) -> str:
     """Sameer's loop if it exists, else the stub. Reimported fresh each request
     so his edits land immediately under uvicorn --reload."""
     import backend.agent.loop as loop
 
     loop = importlib.reload(loop)
     try:
-        return loop.run_turn(session_id, message, system)
+        return loop.run_turn(session_id, message, system, image=image)
     except NotImplementedError:
         return loop_stub.run_turn(session_id, message, system)
 
@@ -90,7 +93,7 @@ def _run_turn(session_id: str, message: str, system: str | None = None) -> str:
 @app.post("/chat")
 def chat(body: ChatIn):
     session_id = body.session_id or store.create_session(kind="main")
-    reply = _run_turn(session_id, body.message)
+    reply = _run_turn(session_id, body.message, image=body.image)
     return {"session_id": session_id, "reply": reply}
 
 
@@ -191,6 +194,16 @@ def _get_watch_or_404(watch_id: str) -> dict:
         return store.get_watch(watch_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"no such watch: {watch_id}")
+
+
+@app.get("/watches/{watch_id}/events")
+def watch_events(watch_id: str, limit: int = 40):
+    """The watch's web activity — tool calls/results + cycle summaries — so the
+    UI can show what the worker actually did. Newest first."""
+    watch = _get_watch_or_404(watch_id)
+    sid = watch.get("session_id", "")
+    rows = events.recent_events(limit=400, kinds=["tool_call", "tool_result", "watch_cycle"])
+    return [e for e in rows if e.get("session_id") == sid][:limit]
 
 
 # ── vault ────────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ so the agent loop can recover.
 
 import html
 import json
+import os
 import re
 from datetime import date, datetime, timezone
 
@@ -20,6 +21,18 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {"url": {"type": "string", "description": "Absolute URL to fetch"}},
             "required": ["url"],
+        },
+    },
+    {
+        "name": "web_search",
+        "description": "Search the live web for a query and get back ranked results (title, URL, snippet). Use this to FIND sources before fetching them — e.g. 'soccer cleats deals', 'World Cup scores today', 'RTX 4090 price'. Then web_fetch the most promising result to confirm details.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to search for, in plain words"},
+                "count": {"type": "integer", "description": "How many results to return (default 5)"},
+            },
+            "required": ["query"],
         },
     },
     {
@@ -96,6 +109,8 @@ def execute_tool(name: str, tool_input: dict, session_id: str) -> str:
 def _dispatch(name: str, tool_input: dict, session_id: str) -> str:
     if name == "web_fetch":
         return _web_fetch(tool_input["url"])
+    if name == "web_search":
+        return _web_search(tool_input["query"], int(tool_input.get("count") or 5))
     if name == "vault_read":
         try:
             return vault.read(tool_input["path"])
@@ -144,6 +159,33 @@ def _strip_html(raw: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n\n", text)
     return text.strip()
+
+
+# ── web_search (Brave Search API) ────────────────────────────────────────────
+
+def _web_search(query: str, count: int = 5) -> str:
+    import httpx
+
+    key = os.environ.get("BRAVE_API_KEY")
+    if not key:
+        return "web_search unavailable: BRAVE_API_KEY not set"
+    response = httpx.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        params={"q": query, "count": max(1, min(count, 10))},
+        headers={"X-Subscription-Token": key, "Accept": "application/json"},
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    results = (response.json().get("web") or {}).get("results") or []
+    if not results:
+        return f"No web results for: {query}"
+    lines = [f"Web results for '{query}':"]
+    for r in results[:count]:
+        title = html.unescape(re.sub(r"</?strong>", "", r.get("title") or "")).strip()
+        desc = html.unescape(re.sub(r"</?strong>", "", r.get("description") or "")).strip()
+        url = r.get("url") or ""
+        lines.append(f"- [{title}]({url}) — {desc}")
+    return "\n".join(lines)[:2000]
 
 
 # ── save_preference ──────────────────────────────────────────────────────────
