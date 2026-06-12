@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+anthropic
+openai
+clickhouse-connect
+python-dotenv
+httpx
+pydantic

@@ -3,6 +3,10 @@
 > Source of truth for module layout, interfaces, API, and schemas. Written 2026-06-12 (hackathon day).
 > Any agent (human or Claude) writing code reads this first. If you need to deviate, update this file in the same change.
 
+## Framing (pitch-level, from Sameer)
+
+**Gardener is your agent in your garden.** The agent is the main interface — you talk to it, and it tends visible surfaces around itself: the watches it's running (each a conversation you can open and steer), the memory vault it keeps (readable markdown — the *present* state of what it believes), and the event/correction history (ClickHouse — the *past*). Self-maintaining memory is the feature that makes the agent durable long-term, not the headline. The garden has a public gate: the correction changelog publishes to cited.md, where other agents and AI search can cite it. Generative UI (OpenUI/C1) renders agent outputs as live components *inside* the chat — garnish slot, never the host of the agent loop (C1 owns the LLM call; our loop is hand-written).
+
 ## The demo arc (what must work, in order of importance)
 
 1. User chats with the **main agent**; it can act (web fetch, vault writes) — every turn/tool-call/memory-write logged as an **event**.

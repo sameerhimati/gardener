@@ -1,0 +1,54 @@
+# Gardener — Render Blueprint (see docs/render.md)
+#
+# Lint worker runs as a CRON JOB, not Render Workflows: Workflows (public beta,
+# Apr 2026) has no native schedule trigger yet and can't be defined in
+# Blueprints — a cron job is GA, $1/mo minimum, and exactly fits the periodic,
+# bounded lint loop. Migrate to Workflows once cron triggers land.
+#
+# Secrets live in the "gardener-env" environment group: create it in the
+# Render Dashboard (Environment → Environment Groups) with the keys from
+# env.example before the first Blueprint deploy.
+# Validate locally with: render validate render.yaml
+
+services:
+  # FastAPI chat + API
+  - name: gardener-api
+    type: web
+    runtime: python
+    plan: starter # $7/mo — no cold starts on the demo path
+    region: oregon
+    autoDeployTrigger: commit
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - fromGroup: gardener-env
+
+  # Lint worker — audits vault vs. events every 10 minutes (UTC)
+  - name: gardener-lint-worker
+    type: cron
+    runtime: python
+    plan: starter
+    region: oregon
+    schedule: "*/10 * * * *"
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python -m backend.worker.lint_worker
+    envVars:
+      - fromGroup: gardener-env
+
+  # Web UI (web/ — Next.js 14):
+  # docs/render.md shows no vetted static/node Blueprint pattern for this stack,
+  # so the web app deploys from this same repo as a second service created in
+  # the Dashboard (New → Web Service → runtime Node, root directory web/), or
+  # uncomment and adjust the block below if you want it in the Blueprint:
+  #
+  # - name: gardener-web
+  #   type: web
+  #   runtime: node
+  #   plan: starter
+  #   region: oregon
+  #   rootDir: web
+  #   buildCommand: npm install && npm run build
+  #   startCommand: npm run start
+  #   envVars:
+  #     - key: NEXT_PUBLIC_API_URL
+  #       sync: false # set to the gardener-api public URL
