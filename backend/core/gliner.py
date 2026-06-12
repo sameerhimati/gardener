@@ -9,12 +9,20 @@ right call to harden.
 Activated only when GLINER_MODEL_ID is set; otherwise distill_text uses the LLM
 path unchanged. On any error we return None so the caller falls back.
 
+Two checkpoints exist (both from scripts/pioneer_finetune.py):
+  * v1 `gardener-housing-extractor-v1` — housing-only LoRA. Pair with the
+    HOUSING-GATED mode below.
+  * v2 `gardener-broad-extractor-v1` — BROAD, task-agnostic LoRA trained on the
+    `gardener-broad-extractor` synthetic dataset (28 labels across housing,
+    stocks/crypto, travel, shopping, weather, packages, events, generic). Pair
+    with TASK-AGNOSTIC mode. This is the checkpoint that fixes the "everything is
+    housing" bug.
+
 Two modes:
 
-  * HOUSING-GATED (default): the deployed checkpoint was LoRA-fine-tuned on
-    housing labels, so we run it ONLY on clearly housing-domain text and render
-    to housing facts. Non-housing text returns None → the safe LLM distiller
-    handles it. This is the proven path.
+  * HOUSING-GATED (default): run the model ONLY on clearly housing-domain text and
+    render to housing facts. Non-housing text returns None → the safe LLM
+    distiller handles it. This is the proven path; safe with EITHER checkpoint.
 
   * TASK-AGNOSTIC (opt-in via GLINER_TASK_AGNOSTIC=1): GLiNER2 is architecturally
     zero-shot — `schema:{entities:[...]}` is supplied at inference, so the label
@@ -23,19 +31,16 @@ Two modes:
     GPU, a price target for a ticker, a flight number, etc.). The housing gate is
     dropped in this mode because labels are chosen per-topic.
 
-    *** Why this is OPT-IN, not the default. ***
-    The deployed checkpoint is a *housing* LoRA fine-tune, and the fine-tune note
-    flags it as lightly-trained (it already leaks overlapping labels within
-    housing). A housing-tuned head may ignore off-domain labels like `ticker` or
-    `flight_number` and still emit housing-shaped spans — i.e. re-introduce the
-    exact "everything is housing" bug the gate was built to stop. The dynamic
-    label SCHEMA, topic router, and renderers below are all live and unit-tested;
-    what is NOT yet verified is whether THIS checkpoint honors the off-domain
-    labels at inference. Until that's confirmed against the hosted model, the
-    default stays gated so we never ship a regression. Flip GLINER_TASK_AGNOSTIC=1
-    once a live check shows the four acceptance strings label correctly.
+    *** Use this mode ONLY with the v2 broad checkpoint. ***
+    A *housing-only* head (v1) ignores off-domain labels like `ticker` or `flight`
+    and re-emits housing-shaped spans — the exact "everything is housing" bug the
+    gate was built to stop — so this mode stays OPT-IN. The v2 broad checkpoint
+    was verified live against the four acceptance strings ("GPU under $500" →
+    shopping/product, "SPCX crosses $165" → stocks/ticker+price_target, the
+    housing string → housing, "track flight UA328" → travel/flight). To go live:
+    set GLINER_MODEL_ID to the v2 model id and GLINER_TASK_AGNOSTIC=1 in .env.
 
-Pipeline that produced the model: scripts/pioneer_finetune.py.
+Pipeline that produced the models: scripts/pioneer_finetune.py.
 """
 
 from __future__ import annotations
@@ -47,10 +52,27 @@ import httpx
 
 BASE = "https://api.pioneer.ai"
 
-# Housing label set — what the deployed checkpoint was fine-tuned on.
+# Housing label set — what the v1 housing-only checkpoint was fine-tuned on.
 HOUSING_LABELS = [
     "neighborhood", "city", "min_bedrooms", "min_bathrooms",
     "min_sqft", "max_price", "property_type", "must_have_feature",
+]
+
+# Broad label set — what the v2 task-agnostic checkpoint
+# (gardener-broad-extractor-v1) is fine-tuned on. Spans every Gardener domain so
+# one head extracts domain-correct entities. Names match the Pioneer dataset and
+# the renderers below. Used by the task-agnostic "general" fallback so the model
+# can surface any trained entity even when no specific topic rule fires.
+BROAD_LABELS = [
+    "neighborhood", "city", "min_bedrooms", "min_bathrooms",
+    "min_sqft", "max_price", "property_type", "must_have_feature",
+    "ticker", "price_target", "direction",
+    "flight", "airline", "route", "date",
+    "product", "brand", "budget", "condition",
+    "location", "zip",
+    "carrier", "tracking_id",
+    "event_name", "venue",
+    "preference", "constraint", "quantity",
 ]
 
 # Back-compat alias for callers/tests that imported the old name.
@@ -75,16 +97,33 @@ _HOUSING_RENDER = {
 
 # General, topic-agnostic labels. The vault topic is chosen by the topic router
 # (so a "price" in a shopping message files under shopping, in a stock message
-# under stocks). Templates read correctly regardless of domain.
+# under stocks). Templates read correctly regardless of domain. These label names
+# match the broad Pioneer dataset (gardener-broad-extractor) the model is trained
+# on, so the trained head and this renderer agree on the vocabulary.
 _GENERAL_RENDER = {
+    # shopping
     "product":        ("{topic}", "Interested in {v}"),
     "brand":          ("{topic}", "Prefers the brand {v}"),
     "budget":         ("{topic}", "Budget up to {v}"),
-    "price_target":   ("{topic}", "Price target: {v}"),
+    "condition":      ("{topic}", "Condition: {v}"),
+    # stocks / crypto
     "ticker":         ("stocks", "Watching ticker {v}"),
+    "price_target":   ("{topic}", "Price target: {v}"),
+    "direction":      ("{topic}", "Trigger direction: {v}"),
+    # travel
     "flight":         ("travel", "Tracking flight {v}"),
+    "airline":        ("travel", "Airline: {v}"),
+    "route":          ("travel", "Route: {v}"),
+    # packages
+    "carrier":        ("packages", "Carrier: {v}"),
+    "tracking_id":    ("packages", "Tracking number {v}"),
+    # events / tickets
+    "event_name":     ("events", "Watching event: {v}"),
+    "venue":          ("events", "Venue: {v}"),
+    # weather / generic location
     "location":       ("{topic}", "Location: {v}"),
     "zip":            ("{topic}", "Area: {v}"),
+    # generic
     "quantity":       ("{topic}", "Quantity: {n}"),
     "date":           ("{topic}", "Date: {v}"),
     "constraint":     ("{topic}", "Constraint: {v}"),
@@ -102,18 +141,33 @@ _TOPIC_RULES: list[tuple[str, list[str], list[str]]] = [
     ("stocks", [
         "stock", "stocks", "ticker", "shares", "share price", "nasdaq", "nyse",
         "s&p", "etf", "crosses", "calls", "puts", "earnings", "dividend",
-        "market cap", "$spy", "premarket",
-    ], ["ticker", "price_target", "constraint", "date"]),
+        "market cap", "$spy", "premarket", "crypto", "bitcoin", "btc", "eth",
+        "ethereum", "coin", "above ", "below ", "drops below", "hits ",
+    ], ["ticker", "price_target", "direction", "constraint", "date"]),
     ("travel", [
         "flight", "flights", "airline", "departure", "arrival", "layover",
         "boarding", "gate ", "terminal", "nonstop", "round trip", "one way",
-    ], ["flight", "location", "date", "price_target", "constraint"]),
+        "fare", "fares", "united", "delta", "southwest", "jetblue", "to ",
+    ], ["flight", "airline", "route", "location", "date", "price_target", "constraint"]),
+    ("packages", [
+        "package", "tracking", "track my", "carrier", "ups", "fedex", "usps",
+        "dhl", "shipment", "shipped", "delivery", "out for delivery", "parcel",
+        "where is my order", "where's my order",
+    ], ["carrier", "tracking_id", "date", "constraint"]),
+    ("events", [
+        "ticket", "tickets", "concert", "show", "game", "tour", "festival",
+        "venue", "stadium", "arena", "matinee", "playing at", "live at",
+    ], ["event_name", "venue", "location", "date", "price_target", "quantity", "constraint"]),
+    ("weather", [
+        "weather", "forecast", "rain", "snow", "temperature", "heat wave",
+        "storm", "hurricane", "wind", "humidity", "uv index",
+    ], ["location", "date", "constraint", "preference"]),
     ("shopping", [
         "gpu", "graphics card", "cpu", "laptop", "monitor", "ssd", "phone",
         "headphones", "keyboard", "buy", "deal", "discount", "in stock",
         "restock", "msrp", "under $", "below $", "amazon", "newegg", "best buy",
-        "gb ", "tb ", "ram", "vram",
-    ], ["product", "brand", "budget", "constraint", "quantity", "preference"]),
+        "gb ", "tb ", "ram", "vram", "used", "refurbished", "new ",
+    ], ["product", "brand", "budget", "condition", "constraint", "quantity", "preference"]),
 ]
 
 # Housing terms (gate + topic trigger). Kept from the proven gate.
@@ -134,8 +188,17 @@ _HOUSING_WORDS = (
 )
 
 # Generic fallback labels when no topic matches (general onboarding chatter).
+# The broad checkpoint is trained jointly on all domains, so when no specific
+# topic fires we still offer the cross-domain non-housing labels and let the
+# model pick. Housing numeric fields are intentionally excluded here — they only
+# fire under the housing gate, which prevents the "everything is housing" bug.
 _GENERAL_FALLBACK_LABELS = [
-    "budget", "price_target", "location", "date", "constraint", "preference",
+    "product", "brand", "budget", "condition",
+    "ticker", "price_target", "direction",
+    "flight", "airline", "route",
+    "carrier", "tracking_id",
+    "event_name", "venue",
+    "location", "zip", "quantity", "date", "constraint", "preference",
 ]
 
 
