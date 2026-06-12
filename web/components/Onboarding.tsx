@@ -18,26 +18,63 @@ const TAGLINE = "An agent whose memory takes care of itself.";
 /* ── interest starting points ──────────────────────────────────────────────
    Each chip is a real starting intent. Selecting one seeds a standing watch
    (the agent spawns it from the text). The first group is the demo persona's
-   world; the second is general so it never looks hardcoded to one user. */
+   world; the second is general so it never looks hardcoded to one user.
+
+   `prompt` is a function of the entered zip so location-dependent chips
+   (homes, apartments, weather, anything "near me") inject the real zip the
+   user typed in basics — "near me" actually means their place, not the seed
+   persona's. When no zip was entered, fall back to the generic phrasing. */
 interface Interest {
   label: string; // short chip text
-  prompt: string; // the actual intent sent to the agent (it may spawn a watch)
+  prompt: (zip: string) => string; // actual intent sent to the agent; zip is "" if none
 }
 
+// "houses near me" → "houses near 77005" when a zip is known, else generic.
+const nearZip = (zip: string, withZip: string, generic: string) =>
+  zip ? withZip.replace("{zip}", zip) : generic;
+
 const INTERESTS_PERSONAL: Interest[] = [
-  { label: "Houses near me", prompt: "Watch Zillow for houses in my neighborhood" },
-  { label: "GPU deals", prompt: "Track GPU prices and tell me about deals under $500" },
-  { label: "What I'm reading", prompt: "Keep notes on what I'm reading" },
-  { label: "AI agent research", prompt: "Follow new research on AI agents" },
+  {
+    label: "Houses near me",
+    prompt: (zip) =>
+      nearZip(
+        zip,
+        "Watch Zillow for houses near {zip}",
+        "Watch Zillow for houses in my neighborhood",
+      ),
+  },
+  {
+    label: "Weather near me",
+    prompt: (zip) =>
+      nearZip(
+        zip,
+        "Watch the weather in {zip} and warn me about anything notable",
+        "Watch my local weather and warn me about anything notable",
+      ),
+  },
+  { label: "GPU deals", prompt: () => "Track GPU prices and tell me about deals under $500" },
+  { label: "What I'm reading", prompt: () => "Keep notes on what I'm reading" },
+  { label: "AI agent research", prompt: () => "Follow new research on AI agents" },
 ];
 
 const INTERESTS_GENERAL: Interest[] = [
-  { label: "Flight deals", prompt: "Find flight deals to a place I want to go" },
-  { label: "Concert tickets", prompt: "Alert me when concert tickets I care about drop" },
-  { label: "Back in stock", prompt: "Watch a product until it's back in stock" },
-  { label: "News on a topic", prompt: "Summarize news on a topic I care about" },
-  { label: "A stock or crypto", prompt: "Track a stock or crypto for me" },
-  { label: "Apartments on a budget", prompt: "Find apartments under a budget" },
+  { label: "Flight status", prompt: () => "Track a flight's status and tell me about delays or gate changes" },
+  { label: "Flight deals", prompt: () => "Find flight deals to a place I want to go" },
+  { label: "Package tracking", prompt: () => "Track a package and tell me when it's out for delivery" },
+  { label: "Concert tickets", prompt: () => "Alert me when concert tickets I care about drop" },
+  { label: "Price drop", prompt: () => "Watch a product and tell me when the price drops" },
+  { label: "Back in stock", prompt: () => "Watch a product until it's back in stock" },
+  { label: "News on a topic", prompt: () => "Summarize news on a topic I care about" },
+  { label: "A stock or crypto", prompt: () => "Track a stock or crypto for me" },
+  {
+    label: "Apartments near me",
+    prompt: (zip) =>
+      nearZip(
+        zip,
+        "Find apartments near {zip} within a budget",
+        "Find apartments under a budget",
+      ),
+  },
 ];
 
 /** One user↔Gardener exchange inside a step. `reply: null` = in flight. */
@@ -57,25 +94,99 @@ const STEP_ACTIVE = 3;
 const STEP_FINAL = 4;
 const STEP_COUNT = STEP_FINAL; // dots cover concept..active (final has none)
 
-function FactChip({ fact, index }: { fact: PlantedFact; index: number }) {
+/** A planted fact, rendered as a pill. Tap to correct the extracted text
+ *  inline before it's the version that sticks — confirming re-plants the
+ *  corrected fact into the vault (`onCommit`). If no `onCommit` is given the
+ *  pill is read-only (e.g. the final summary just mirrors what was planted). */
+function FactChip({
+  fact,
+  index,
+  onCommit,
+}: {
+  fact: PlantedFact;
+  index: number;
+  onCommit?: (corrected: string) => void;
+}) {
+  const editable = Boolean(onCommit);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(fact.fact);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const startEdit = () => {
+    if (!editable) return;
+    setDraft(fact.fact);
+    setEditing(true);
+  };
+
+  const commit = () => {
+    const next = draft.trim();
+    setEditing(false);
+    if (next && next !== fact.fact) onCommit?.(next);
+  };
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
   return (
     <motion.span
       initial={{ opacity: 0, scale: 0.85, y: 5 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.3, ease: EASE_OUT, delay: index * 0.06 }}
-      className="inline-flex max-w-full items-center gap-2 rounded-full border border-moss/25 bg-moss/10 px-3 py-1.5 text-xs text-moss-deep"
+      className={`inline-flex max-w-full items-center gap-2 rounded-full border border-moss/25 bg-moss/10 px-3 py-1.5 text-xs text-moss-deep ${
+        editable && !editing ? "cursor-text hover:border-moss/45" : ""
+      }`}
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-moss" aria-hidden />
-      <span className="truncate">
-        <span className="font-medium">{fact.topic}</span>
-        <span className="text-moss-deep/60"> — </span>
-        {fact.fact}
-      </span>
+      {editing ? (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="font-medium">{fact.topic}</span>
+          <span className="text-moss-deep/60">—</span>
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setEditing(false);
+              }
+            }}
+            onBlur={commit}
+            className="min-w-[8ch] max-w-[40ch] rounded-md border border-moss/40 bg-bg px-1.5 py-0.5 text-xs text-ink outline-none focus:border-moss"
+            style={{ width: `${Math.max(draft.length, 8) + 2}ch` }}
+          />
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={startEdit}
+          disabled={!editable}
+          title={editable ? "Tap to correct" : undefined}
+          className="truncate text-left disabled:cursor-default"
+        >
+          <span className="font-medium">{fact.topic}</span>
+          <span className="text-moss-deep/60"> — </span>
+          {fact.fact}
+        </button>
+      )}
     </motion.span>
   );
 }
 
-function ExchangeView({ exchange }: { exchange: Exchange }) {
+function ExchangeView({
+  exchange,
+  onEditFact,
+}: {
+  exchange: Exchange;
+  onEditFact: (factIndex: number, corrected: string) => void;
+}) {
   return (
     <div>
       {/* the user's words, settled on the page */}
@@ -112,7 +223,12 @@ function ExchangeView({ exchange }: { exchange: Exchange }) {
           {exchange.facts.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-2">
               {exchange.facts.map((f, i) => (
-                <FactChip key={i} fact={f} index={i} />
+                <FactChip
+                  key={i}
+                  fact={f}
+                  index={i}
+                  onCommit={(corrected) => onEditFact(i, corrected)}
+                />
               ))}
             </div>
           )}
@@ -189,6 +305,33 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
     [sessionId, input],
   );
 
+  // Correct a planted fact: update the pill text in place, then re-plant the
+  // corrected wording into the vault so the saved version matches what's shown.
+  // `step` tells us which conversation the edited exchange belongs to.
+  const editFact = useCallback(
+    (isInterests: boolean, exchangeIndex: number, factIndex: number, corrected: string) => {
+      const setList = isInterests ? setInterestExchanges : setActiveExchanges;
+      let topic = "";
+      setList((prev) =>
+        prev.map((e, ei) => {
+          if (ei !== exchangeIndex) return e;
+          return {
+            ...e,
+            facts: e.facts.map((f, fi) => {
+              if (fi !== factIndex) return f;
+              topic = f.topic;
+              return { ...f, fact: corrected };
+            }),
+          };
+        }),
+      );
+      // re-plant the corrected wording (fail soft — UI already reflects the fix)
+      const phrasing = topic ? `${topic}: ${corrected}` : corrected;
+      void distill(phrasing, "onboarding").catch(() => {});
+    },
+    [],
+  );
+
   // composer submit, routed to whichever conversational step we're on
   const submit = useCallback(() => {
     const text = input.trim();
@@ -201,18 +344,20 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
     void runTurn(text, question, isInterests);
   }, [input, thinking, step, runTurn]);
 
-  // tapping an interest chip seeds a real intent through the agent
+  // tapping an interest chip seeds a real intent through the agent.
+  // The prompt is built from the entered zip, so "near me" chips (homes,
+  // apartments, weather) carry the user's real location, not the seed persona's.
   const pickInterest = useCallback(
     (intent: Interest) => {
-      if (thinking || chosen.has(intent.prompt)) return;
-      setChosen((prev) => new Set(prev).add(intent.prompt));
+      if (thinking || chosen.has(intent.label)) return;
+      setChosen((prev) => new Set(prev).add(intent.label));
       void runTurn(
-        intent.prompt,
+        intent.prompt(zip.trim()),
         "What would you like Gardener to keep an eye on?",
         true,
       );
     },
-    [thinking, chosen, runTurn],
+    [thinking, chosen, runTurn, zip],
   );
 
   // save name + zip into the vault, then advance
@@ -439,13 +584,13 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
                   {/* selectable starting points */}
                   <div className="mt-6 flex flex-wrap gap-2">
                     {[...INTERESTS_PERSONAL, ...INTERESTS_GENERAL].map((it) => {
-                      const picked = chosen.has(it.prompt);
+                      const picked = chosen.has(it.label);
                       return (
                         <button
-                          key={it.prompt}
+                          key={it.label}
                           onClick={() => pickInterest(it)}
                           disabled={thinking || picked}
-                          title={it.prompt}
+                          title={it.prompt(zip.trim())}
                           className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors disabled:cursor-default ${
                             picked
                               ? "border-moss/40 bg-moss/10 text-moss-deep"
@@ -467,7 +612,13 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
                   {stepExchanges.length > 0 && (
                     <div className="mt-7 flex max-h-[34vh] flex-col gap-6 overflow-y-auto pr-1">
                       {stepExchanges.map((e, i) => (
-                        <ExchangeView key={i} exchange={e} />
+                        <ExchangeView
+                          key={i}
+                          exchange={e}
+                          onEditFact={(factIndex, corrected) =>
+                            editFact(true, i, factIndex, corrected)
+                          }
+                        />
                       ))}
                       <div ref={bottomRef} />
                     </div>
@@ -541,7 +692,13 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
                   {stepExchanges.length > 0 && (
                     <div className="mt-7 flex max-h-[40vh] flex-col gap-6 overflow-y-auto pr-1">
                       {stepExchanges.map((e, i) => (
-                        <ExchangeView key={i} exchange={e} />
+                        <ExchangeView
+                          key={i}
+                          exchange={e}
+                          onEditFact={(factIndex, corrected) =>
+                            editFact(false, i, factIndex, corrected)
+                          }
+                        />
                       ))}
                       <div ref={bottomRef} />
                     </div>

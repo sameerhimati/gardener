@@ -33,17 +33,24 @@ DATA_DIR = REPO_ROOT / "data"
 EVENTS_JSONL = DATA_DIR / "events.jsonl"
 WATCHES_JSON = DATA_DIR / "watches.json"
 
+# The seeded belief is intentionally LOCATION-NEUTRAL: the contradiction beat is
+# about *size* ("any size is fine" vs "3+ bedrooms, 1500+ sqft"), which holds no
+# matter where the user lives. Keeping the city/zip out of the seed means a fresh
+# user's own zip (typed in onboarding basics) drives "houses near me" — the seed
+# never fights the type-your-own-zip story. Do NOT reintroduce a hardcoded city
+# here: it would both contradict the user's entered location and add noise the
+# contradiction-lint demo doesn't need.
 HOUSING_MD = """---
 topic: housing
 updated: 2026-06-12
 ---
-- Looking to buy a house in Houston 77005 (src: chat 2026-06-12)
+- Looking to buy a house (src: chat 2026-06-12)
 - Any size or layout is fine (src: chat 2026-06-12)
 """
 
-WATCH_TASK = "Watch Zillow for new listings in Houston 77005"
+WATCH_TASK = "Watch Zillow for new house listings near me"
 USER_MSG = (
-    "Can you watch Zillow for new listings in Houston 77005 and let me know "
+    "Can you watch Zillow for new house listings near me and let me know "
     "when something comes up?"
 )
 STEER_MSG = (
