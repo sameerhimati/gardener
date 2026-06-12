@@ -22,6 +22,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+# Load .env so SENSO_API_KEY is picked up when run standalone (the backend app
+# loads it too, but this script runs on its own — without this it silently no-ops).
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO_ROOT / ".env")
+except ImportError:
+    pass
+
 DATA_DIR = REPO_ROOT / "data"
 CHANGELOG_PATH = DATA_DIR / "changelog.md"
 FINDINGS_JSONL = DATA_DIR / "findings.jsonl"
