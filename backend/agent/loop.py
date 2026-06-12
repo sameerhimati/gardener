@@ -22,7 +22,12 @@ from backend.core import events, store
 MAX_ITERATIONS = 15
 
 
-def run_turn(session_id: str, user_message: str, system: str | None = None) -> str:
+def run_turn(
+    session_id: str,
+    user_message: str,
+    system: str | None = None,
+    image: str | None = None,
+) -> str:
     # 1. The event trail starts here — the lint agent audits these later.
     events.log_event("user_msg", {"text": user_message}, session_id)
     store.append_message(session_id, "user", user_message)
@@ -35,6 +40,20 @@ def run_turn(session_id: str, user_message: str, system: str | None = None) -> s
         for m in store.get_messages(session_id)
         if m.get("role") in ("user", "assistant") and m.get("content")
     ]
+
+    # 2b. Vision: if the user attached an image (a data: URI), turn THIS turn's
+    #     last user message into a [text, image] content-block list. Stored
+    #     history stays plain text — only the live `messages` carry the image.
+    if image and messages:
+        media_type, data = _parse_data_uri(image)
+        if data:
+            messages[-1] = {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_message},
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}},
+                ],
+            }
 
     # 3. System prompt: orchestrator by default; watch cycles pass WATCH_RUNNER.
     #    with_vault_context() appends the current memory vault — this is how the
@@ -84,3 +103,13 @@ def run_turn(session_id: str, user_message: str, system: str | None = None) -> s
     store.append_message(session_id, "assistant", final_text)
     events.log_event("assistant_msg", {"text": final_text}, session_id)
     return final_text
+
+
+def _parse_data_uri(uri: str) -> tuple[str, str]:
+    """Split a 'data:image/png;base64,XXXX' URI into (media_type, base64_data).
+    Returns ('', '') if it isn't a base64 data URI we can use."""
+    if not uri.startswith("data:") or ";base64," not in uri:
+        return "", ""
+    header, data = uri.split(";base64,", 1)
+    media_type = header[len("data:"):] or "image/png"
+    return media_type, data
