@@ -45,9 +45,11 @@ def run_cycle(watch_id: str) -> dict:
         f"Task: {watch['task']}\n"
         f"act_mode: {act_mode}\n"
         "Run one check now and report. If — and only if — you find a GENUINE, "
-        "confident match, act per act_mode (draft = create a Gmail draft / "
-        "tentative calendar event with the link, never send; send = send a "
-        "concise alert email; off = report only). Never act on a no-result cycle."
+        "confident match, act per act_mode (calendar = create a Google Calendar "
+        "event for the match via GOOGLECALENDAR_CREATE_EVENT; discord = post the "
+        "match and its link to Discord via DISCORDBOT_CREATE_MESSAGE; off = report "
+        "only). Never act on a no-result cycle. If prior context might matter "
+        "(was this corrected before?), call cited_read first."
     )
 
     reply = _run_agent_turn(watch["session_id"], cycle_prompt, prompts.WATCH_RUNNER)

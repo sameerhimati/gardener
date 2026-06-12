@@ -79,8 +79,8 @@ TOOLS: list[dict] = [
                 "cadence_sec": {"type": "integer", "description": "Seconds between cycles (default 120)"},
                 "act_mode": {
                     "type": "string",
-                    "enum": ["draft", "send", "off"],
-                    "description": "What this watch does on a GENUINE match: 'draft' = create a Gmail draft / tentative calendar event (never sends; use for high-stakes or personal actions like emailing about a house); 'send' = send a concise alert email (use for time-sensitive low-stakes alerts like a price drop); 'off' = report only, take no action (default; pure monitoring).",
+                    "enum": ["off", "calendar", "discord"],
+                    "description": "What this watch does on a GENUINE match: 'off' = report only, take no action (default; pure monitoring); 'calendar' = create a Google Calendar event for the match (use for time/date-bound finds like an event, deadline, viewing, or appointment); 'discord' = post the match to Discord (use for shareable alerts like a price drop, deal, or new listing the user wants pushed to a channel).",
                 },
             },
             "required": ["task"],
@@ -89,6 +89,17 @@ TOOLS: list[dict] = [
     {
         "name": "list_watches",
         "description": "List all standing watches with their status and last result.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cited_read",
+        "description": (
+            "Read Gardener's public correction changelog (cited.md) — the published record of "
+            "what Gardener has learned and corrected in its memory, with receipts/provenance. "
+            "Use this when you need PRIOR context or past corrections before deciding (e.g. 'have "
+            "I been told this before?', 'did a previous correction reverse this preference?'). "
+            "Returns the changelog markdown."
+        ),
         "input_schema": {"type": "object", "properties": {}},
     },
 ]
@@ -144,6 +155,8 @@ def _dispatch(name: str, tool_input: dict, session_id: str) -> str:
         )
     if name == "list_watches":
         return json.dumps(store.list_watches(), indent=2, default=str)
+    if name == "cited_read":
+        return _cited_read()
     # Composio (Gmail/Calendar) tools dispatch here, still inside execute_tool's
     # event-logging wrapper — so the action shows up in the activity trail.
     if composio_client.is_composio_tool(name):
@@ -153,6 +166,28 @@ def _dispatch(name: str, tool_input: dict, session_id: str) -> str:
 
 def _source(session_id: str) -> str:
     return f"session:{session_id}" if session_id else "agent"
+
+
+# ── cited.md (public correction changelog) ───────────────────────────────────
+
+# cited.md publishes to a dynamic URL (https://cited.md/article/<content_id>),
+# known only after a Senso publish run. The stable, always-present source is the
+# local changelog the publish pipeline writes (publish/senso_publish.py →
+# data/changelog.md). Read that; it IS the content published to cited.md.
+
+def _cited_read() -> str:
+    from pathlib import Path
+
+    changelog = Path(__file__).resolve().parents[2] / "data" / "changelog.md"
+    try:
+        text = changelog.read_text()
+    except FileNotFoundError:
+        return (
+            "cited.md changelog not generated yet (no corrections published). "
+            "Run `python publish/senso_publish.py` to build/publish it. No prior "
+            "corrections to cite."
+        )
+    return text[:8000] if text.strip() else "cited.md changelog is empty — no corrections recorded yet."
 
 
 # ── web_fetch ────────────────────────────────────────────────────────────────
@@ -245,7 +280,8 @@ def _spawn_watch(task: str, cadence_sec: int, session_id: str, act_mode: str = "
     for w in store.list_watches():
         if w.get("status") == "active" and w.get("task", "").strip().lower() == task.strip().lower():
             return f"NOT SPAWNED: an active watch with this exact task already exists ({w['id']})."
-    act_mode = act_mode if act_mode in ("draft", "send", "off") else "off"
+    # Back-compat tolerance: unknown / legacy values (draft/send) → off.
+    act_mode = act_mode if act_mode in ("off", "calendar", "discord") else "off"
     watch = store.create_watch(task, cadence_sec, act_mode=act_mode)
     events.log_event(
         "watch_spawn",

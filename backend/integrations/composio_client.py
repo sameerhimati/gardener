@@ -1,12 +1,16 @@
-"""Composio integration — the watch-hit → act bridge (Gmail + Calendar).
+"""Composio integration — the watch-hit → act bridge (Calendar + Discord).
 
 Fully OPTIONAL and lazy. The whole app must run with only ANTHROPIC_API_KEY:
 - If COMPOSIO_API_KEY is unset or the SDK imports fail, available() is False,
   tool_schemas() returns [], and execute() returns a clean ERROR string.
 - Nothing here ever raises into the agent loop.
 
-Scoped tightly to three action slugs (keeps the model's token count sane):
-    GMAIL_CREATE_EMAIL_DRAFT, GMAIL_SEND_EMAIL, GOOGLECALENDAR_CREATE_EVENT.
+Scoped tightly to two action slugs (keeps the model's token count sane):
+    GOOGLECALENDAR_CREATE_EVENT, DISCORDBOT_CREATE_MESSAGE.
+
+Gmail was dropped — Google OAuth for restricted Gmail scopes is hard-blocked.
+Calendar and Discord both have clean Composio auth (`composio connected-accounts
+link googlecalendar` / `link discordbot`).
 
 See docs/composio.md (v3 SDK, composio + composio-anthropic 0.13.1). Trust that
 guide over any older Composio knowledge: string slugs, AnthropicProvider,
@@ -21,13 +25,14 @@ import os
 # rewrite. (docs/composio.md §4: never use "default".)
 USER_ID = "sameer"
 
-# The ONLY slugs we expose. Scope tightly: 3 write-actions for the demo loop.
+# The ONLY slugs we expose. Scope tightly: 2 write-actions for the demo loop.
+# DISCORDBOT_CREATE_MESSAGE: verified v3 slug (toolkit DISCORDBOT) — required
+# input is `channel_id`; `content` carries the message text (max 2000 chars).
 SCOPED_SLUGS = [
-    "GMAIL_CREATE_EMAIL_DRAFT",
-    "GMAIL_SEND_EMAIL",
     "GOOGLECALENDAR_CREATE_EVENT",
+    "DISCORDBOT_CREATE_MESSAGE",
 ]
-_TOOLKITS = ["GMAIL", "GOOGLECALENDAR"]
+_TOOLKITS = ["GOOGLECALENDAR", "DISCORDBOT"]
 
 # Lazy caches.
 _composio = None  # Composio client instance
@@ -150,18 +155,14 @@ def _summarize(name: str, arguments: dict, result) -> str:
             return f"ERROR: Composio {name} returned: {data.get('error') or data}"
         successful = data.get("successful", True)
 
-    subject = (arguments.get("subject") or "").strip()
-    recipient = (
-        arguments.get("recipient_email") or arguments.get("to") or arguments.get("recipient") or ""
-    )
-    if name == "GMAIL_CREATE_EMAIL_DRAFT":
-        bits = [b for b in [f'"{subject}"' if subject else "", f"to {recipient}" if recipient else ""] if b]
-        return f"Gmail draft created{(' ' + ' '.join(bits)) if bits else ''}."
-    if name == "GMAIL_SEND_EMAIL":
-        bits = [b for b in [f'"{subject}"' if subject else "", f"to {recipient}" if recipient else ""] if b]
-        return f"Email sent{(' ' + ' '.join(bits)) if bits else ''}."
     if name == "GOOGLECALENDAR_CREATE_EVENT":
         title = (arguments.get("summary") or arguments.get("title") or "").strip()
         start = arguments.get("start_datetime") or arguments.get("start_time") or ""
         return f'Calendar event created{f": {title}" if title else ""}{f" at {start}" if start else ""}.'
+    if name == "DISCORDBOT_CREATE_MESSAGE":
+        channel = (arguments.get("channel_id") or "").strip()
+        content = (arguments.get("content") or "").strip()
+        preview = (content[:80] + "…") if len(content) > 80 else content
+        bits = [b for b in [f'"{preview}"' if preview else "", f"to channel {channel}" if channel else ""] if b]
+        return f"Discord message posted{(' ' + ' '.join(bits)) if bits else ''}."
     return f"Composio {name} {'succeeded' if successful else 'completed'}."
