@@ -6,6 +6,20 @@ import { getVault, getVaultFile, type VaultFile, type VaultFileMeta } from "@/li
 import { relativeTime, usePolling } from "@/lib/hooks";
 import { Markdown } from "@/lib/markdown";
 
+// Same fallback as lib/api.ts — empty env var must still resolve to localhost.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/** Persist an edited vault note. Returns the saved {path, content}. */
+async function writeVaultFile(path: string, content: string): Promise<VaultFile> {
+  const res = await fetch(`${API_URL}/vault/file`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+  if (!res.ok) throw new Error(`PUT /vault/file → ${res.status}`);
+  return (await res.json()) as VaultFile;
+}
+
 /** First meaningful line of a vault note — for the "ask in chat" snippet. */
 function firstFact(content: string): string {
   for (const raw of content.split("\n")) {
@@ -40,6 +54,15 @@ export default function GardenTab({
   const [view, setView] = useState<"rendered" | "raw">("rendered");
   const [copied, setCopied] = useState(false);
 
+  // Inline editing — the memory feels live when you can hand-tend it.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Local override so the rendered view updates instantly after save, ahead of
+  // the next poll. Cleared when a different file is selected.
+  const [savedContent, setSavedContent] = useState<string | null>(null);
+
   // Auto-select the first file once the list arrives.
   useEffect(() => {
     if (!files || files.length === 0) return;
@@ -48,11 +71,38 @@ export default function GardenTab({
     }
   }, [files, selectedPath]);
 
-  const { data: file } = usePolling<VaultFile>(
+  const { data: file, refresh: refreshFile } = usePolling<VaultFile>(
     selectedPath ? () => getVaultFile(selectedPath) : null,
     3000,
     selectedPath ?? "no-file",
   );
+
+  // Switching files drops any in-flight edit and local override.
+  useEffect(() => {
+    setEditing(false);
+    setSaveError(null);
+    setSavedContent(null);
+  }, [selectedPath]);
+
+  // What the reading pane shows: our just-saved content wins until the poll
+  // catches up, then the live file takes over.
+  const displayContent = savedContent ?? file?.content ?? "";
+
+  async function handleSave() {
+    if (!selectedPath) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const saved = await writeVaultFile(selectedPath, draft);
+      setSavedContent(saved.content);
+      setEditing(false);
+      refreshFile?.();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   // Flash a row when its `updated` changes between polls — memory visibly
   // changing is the money moment.
@@ -143,37 +193,71 @@ export default function GardenTab({
             {selectedPath}
           </span>
           <div className="flex shrink-0 items-center gap-1.5">
-            {/* rendered | raw segmented control */}
-            <div className="flex items-center rounded-md border border-edge text-[11px]">
-              {(["rendered", "raw"] as const).map((v) => (
+            {editing ? (
+              <>
                 <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className={`px-2 py-1 transition-colors first:rounded-l-md last:rounded-r-md ${
-                    view === v
-                      ? "bg-raised text-ink"
-                      : "text-dim hover:text-faint"
-                  }`}
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="rounded-md border border-moss/50 bg-moss/10 px-2.5 py-1 text-[11px] text-moss transition-colors hover:bg-moss/20 disabled:opacity-50"
                 >
-                  {v === "raw" ? "raw .md" : "rendered"}
+                  {saving ? "saving…" : "save"}
                 </button>
-              ))}
-            </div>
-            {view === "raw" && (
-              <button
-                onClick={() => {
-                  navigator.clipboard?.writeText(file.content);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                }}
-                className="rounded-md border border-edge px-2 py-1 text-[11px] text-faint transition-colors hover:border-moss/50 hover:text-moss"
-              >
-                {copied ? "copied" : "copy"}
-              </button>
+                <button
+                  onClick={() => {
+                    setEditing(false);
+                    setSaveError(null);
+                  }}
+                  disabled={saving}
+                  className="rounded-md border border-edge px-2.5 py-1 text-[11px] text-faint transition-colors hover:text-ink disabled:opacity-50"
+                >
+                  cancel
+                </button>
+              </>
+            ) : (
+              <>
+                {/* rendered | raw segmented control */}
+                <div className="flex items-center rounded-md border border-edge text-[11px]">
+                  {(["rendered", "raw"] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setView(v)}
+                      className={`px-2 py-1 transition-colors first:rounded-l-md last:rounded-r-md ${
+                        view === v
+                          ? "bg-raised text-ink"
+                          : "text-dim hover:text-faint"
+                      }`}
+                    >
+                      {v === "raw" ? "raw .md" : "rendered"}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => {
+                    setDraft(displayContent);
+                    setView("raw");
+                    setEditing(true);
+                  }}
+                  className="rounded-md border border-edge px-2.5 py-1 text-[11px] text-faint transition-colors hover:border-moss/50 hover:text-moss"
+                >
+                  edit
+                </button>
+                {view === "raw" && (
+                  <button
+                    onClick={() => {
+                      navigator.clipboard?.writeText(displayContent);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    }}
+                    className="rounded-md border border-edge px-2 py-1 text-[11px] text-faint transition-colors hover:border-moss/50 hover:text-moss"
+                  >
+                    {copied ? "copied" : "copy"}
+                  </button>
+                )}
+              </>
             )}
-            {onFactClick && (
+            {!editing && onFactClick && (
               <button
-                onClick={() => onFactClick(selectedPath, firstFact(file.content))}
+                onClick={() => onFactClick(selectedPath, firstFact(displayContent))}
                 className="rounded-md border border-edge px-2.5 py-1 text-[11px] text-faint transition-colors hover:border-moss/50 hover:text-moss"
               >
                 → ask in chat
@@ -194,12 +278,25 @@ export default function GardenTab({
             transition={{ duration: 0.15, ease: "easeOut" }}
           >
             {file ? (
-              view === "raw" ? (
+              editing ? (
+                <div className="flex flex-col gap-2">
+                  {saveError && (
+                    <p className="text-[11px] text-red-400">{saveError}</p>
+                  )}
+                  <textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    spellCheck={false}
+                    autoFocus
+                    className="min-h-[16rem] w-full resize-y rounded-md border border-moss/30 bg-raised/40 px-3 py-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-moss/60"
+                  />
+                </div>
+              ) : view === "raw" ? (
                 <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-faint">
-                  {file.content}
+                  {displayContent}
                 </pre>
               ) : (
-                <Markdown text={file.content} provenance />
+                <Markdown text={displayContent} provenance />
               )
             ) : (
               <p className="text-xs text-dim">

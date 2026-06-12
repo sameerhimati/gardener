@@ -229,6 +229,23 @@ def vault_file(path: str):
         raise HTTPException(status_code=404, detail=f"no such vault file: {path}")
 
 
+class VaultFileIn(BaseModel):
+    path: str
+    content: str
+
+
+@app.put("/vault/file")
+def vault_file_write(body: VaultFileIn):
+    """Persist an edited vault note. vault.write logs a memory_write event so the
+    user's hand-edit shows up in the event log just like the agent's writes."""
+    try:
+        vault.write(body.path, body.content, source="ui-edit")
+        return {"path": body.path, "content": vault.read(body.path)}
+    except ValueError:
+        # _full_path refuses paths that escape the vault root
+        raise HTTPException(status_code=400, detail=f"bad vault path: {body.path}")
+
+
 # ── lint findings ────────────────────────────────────────────────────────────
 
 def _lint_worker():
