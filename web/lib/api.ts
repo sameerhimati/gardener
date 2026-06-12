@@ -248,3 +248,16 @@ export function editWatch(
 export function deleteWatch(watchId: string): Promise<{ ok: boolean }> {
   return del<{ ok: boolean }>(`/watches/${encodeURIComponent(watchId)}`);
 }
+
+// ---------- connectors (integration status) ----------
+
+export interface Connector {
+  key: string;
+  label: string;
+  connected: boolean;
+  instructions: string;
+}
+
+export function getConnectors(): Promise<Connector[]> {
+  return request<Connector[]>("/connectors");
+}

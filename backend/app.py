@@ -214,6 +214,38 @@ def watch_events(watch_id: str, limit: int = 40):
     return [e for e in rows if e.get("session_id") == sid][:limit]
 
 
+# ── connectors (integration status for the Connections panel) ──────────────
+
+@app.get("/connectors")
+def connectors():
+    """Status of each integration connector (Google Calendar, Discord).
+
+    Lazy + graceful: if Composio isn't configured, every connector reads
+    connected:false with its CLI link command — the panel still renders.
+    """
+    try:
+        from backend.integrations import composio_client
+
+        return composio_client.connectors_status()
+    except Exception as e:  # noqa: BLE001
+        print(f"[app] warning: connectors_status failed: {e}")
+        # Hard fallback so the UI always has something to show.
+        return [
+            {
+                "key": "googlecalendar",
+                "label": "Google Calendar",
+                "connected": False,
+                "instructions": "composio connected-accounts link googlecalendar",
+            },
+            {
+                "key": "discordbot",
+                "label": "Discord",
+                "connected": False,
+                "instructions": "composio connected-accounts link discordbot",
+            },
+        ]
+
+
 # ── vault ────────────────────────────────────────────────────────────────────
 
 @app.get("/vault")
