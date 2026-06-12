@@ -1,7 +1,54 @@
-# Pioneer fine-tune plan — next-session parallel task ($500 "Best Use" track)
+# Pioneer fine-tune — $500 "Best Use" track
 
-> Captured 2026-06-12 from the design-session discussion + Pioneer's data-generation docs
-> (https://docs.pioneer.ai/llms.txt → /generate endpoints). NOT for today's demo — wedge first.
+> Captured 2026-06-12 from the design-session discussion + Pioneer's data-generation docs.
+> **SHIPPED 2026-06-12 — see "## SHIPPED" at the bottom for what was actually built
+> (real API shapes + results). The plan below is preserved for context.**
+
+---
+
+## SHIPPED — fine-tuned GLiNER2 housing-preference extractor
+
+**What it replaces:** the distiller's general-LLM call (`backend/watches/runner.distill_text`
+→ `core/llm.complete`) that turns steering chat into `{topic, fact}` preferences and writes
+them to the memory vault. That call occasionally hallucinated fields/malformed JSON — and
+this is a *memory write*, the worst place for that.
+
+**The model:** `fastino/gliner2-base-v1` (205M encoder) fine-tuned via LoRA on a synthetic
+NER dataset we generated from our own domain. Trained on Pioneer (Modal `g4dn.xlarge`),
+5 epochs, 20% held-out validation. Best validation loss **3.04 → 2.72**.
+
+**Pipeline (all reproducible — `scripts/pioneer_finetune.py`):**
+1. `POST https://api.pioneer.ai/generate` `task_type:"ner"`, 250 synthetic examples,
+   labels `[neighborhood, city, min_bedrooms, min_bathrooms, min_sqft, max_price,
+   property_type, must_have_feature]`. Poll `GET /generate/jobs/:id` → `ready`.
+2. `POST https://api.pioneer.ai/felix/training-jobs` (`training_type:"lora"`, `nr_epochs:5`,
+   `learning_rate:5e-5`). Poll `GET /felix/training-jobs/:id` → `complete`.
+3. Inference: `POST https://api.pioneer.ai/inference` with `model_id` = the training job
+   UUID, `schema:{entities:[...labels]}`, `threshold:0.5`. Response is
+   `result.data.entities = {label: [{text, confidence, start, end}]}`.
+4. Wired into `distill_text` via `backend/core/gliner.py`, gated on `GLINER_MODEL_ID`;
+   Anthropic distiller stays as automatic fallback on any miss/error.
+
+**Real IDs (state mirror in gitignored `data/pioneer_finetune.json`):**
+- dataset job: `f4dbf8b2-416d-403a-9db5-b31c6cbb4146` (`gardener-housing-prefs-v1`)
+- training job / inference `model_id`: **`fd96007f-690f-4044-b36a-e3a5bdf65723`**
+- **To go live:** add `GLINER_MODEL_ID=fd96007f-690f-4044-b36a-e3a5bdf65723` to `.env`.
+
+**Results vs the Anthropic call (held-out steering messages):**
+- Latency: GLiNER **~135 ms** model compute vs Anthropic **~2030 ms** — **~15× faster**.
+- Deterministic structured output; zero malformed-JSON risk on memory writes.
+- A lightly-trained GLiNER leaks overlapping labels (e.g. `$5000`→max_price *and* `5000`
+  →min_sqft); we resolve it with greedy span **non-max suppression** in `gliner.py`
+  (keep highest-confidence label, drop overlapping spans). After NMS, eval set is clean
+  and off-domain text ("what's the weather") correctly extracts nothing.
+
+**On-thesis kicker for the writeup:** Pioneer's Adaptive Inference ("a model that improves
+from its own traffic") rhymes exactly with Gardener's thesis ("a vault that gardens itself").
+Same loop — observe → signal → retrain → gate → promote.
+
+---
+
+## Original plan (context)
 
 ## The idea
 

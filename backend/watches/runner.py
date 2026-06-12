@@ -94,10 +94,15 @@ def distill_text(text: str, source: str) -> list[dict]:
     Returns the list of {topic, fact} items written.
     """
     from backend.agent import prompts
-    from backend.core import llm, vault
+    from backend.core import gliner, llm, vault
 
-    raw = llm.complete(text, system=prompts.DISTILLER)
-    items = _parse_distilled(raw)
+    # Fine-tuned GLiNER2 (Pioneer) handles housing steering deterministically —
+    # no malformed JSON on memory writes. Returns None when inactive/unsure, so
+    # we transparently fall back to the general-LLM distiller.
+    items = gliner.extract(text) if gliner.available() else None
+    if not items:
+        raw = llm.complete(text, system=prompts.DISTILLER)
+        items = _parse_distilled(raw)
     if not items:
         return []
 
