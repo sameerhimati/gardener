@@ -36,6 +36,10 @@ export default function GardenTab({
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
+  // Rendered prose vs. the raw .md source — the vault is real files you can crack open.
+  const [view, setView] = useState<"rendered" | "raw">("rendered");
+  const [copied, setCopied] = useState(false);
+
   // Auto-select the first file once the list arrives.
   useEffect(() => {
     if (!files || files.length === 0) return;
@@ -132,20 +136,50 @@ export default function GardenTab({
         ))}
       </div>
 
-      {/* reading pane toolbar — send this note to the chat */}
-      {onFactClick && selectedPath && file && (
+      {/* reading pane toolbar — toggle rendered/raw, copy source, send to chat */}
+      {selectedPath && file && (
         <div className="flex shrink-0 items-center justify-between gap-2 px-4 pt-3">
           <span className="truncate font-mono text-[11px] text-dim">
             {selectedPath}
           </span>
-          <button
-            onClick={() =>
-              onFactClick(selectedPath, firstFact(file.content))
-            }
-            className="shrink-0 rounded-md border border-edge px-2.5 py-1 text-[11px] text-faint transition-colors hover:border-moss/50 hover:text-moss"
-          >
-            → ask in chat
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {/* rendered | raw segmented control */}
+            <div className="flex items-center rounded-md border border-edge text-[11px]">
+              {(["rendered", "raw"] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`px-2 py-1 transition-colors first:rounded-l-md last:rounded-r-md ${
+                    view === v
+                      ? "bg-raised text-ink"
+                      : "text-dim hover:text-faint"
+                  }`}
+                >
+                  {v === "raw" ? "raw .md" : "rendered"}
+                </button>
+              ))}
+            </div>
+            {view === "raw" && (
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(file.content);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }}
+                className="rounded-md border border-edge px-2 py-1 text-[11px] text-faint transition-colors hover:border-moss/50 hover:text-moss"
+              >
+                {copied ? "copied" : "copy"}
+              </button>
+            )}
+            {onFactClick && (
+              <button
+                onClick={() => onFactClick(selectedPath, firstFact(file.content))}
+                className="rounded-md border border-edge px-2.5 py-1 text-[11px] text-faint transition-colors hover:border-moss/50 hover:text-moss"
+              >
+                → ask in chat
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -160,7 +194,13 @@ export default function GardenTab({
             transition={{ duration: 0.15, ease: "easeOut" }}
           >
             {file ? (
-              <Markdown text={file.content} provenance />
+              view === "raw" ? (
+                <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-faint">
+                  {file.content}
+                </pre>
+              ) : (
+                <Markdown text={file.content} provenance />
+              )
             ) : (
               <p className="text-xs text-dim">
                 {selectedPath ? "…" : "Select a file to read it."}
