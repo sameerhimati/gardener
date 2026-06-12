@@ -1,6 +1,6 @@
 """System prompts: orchestrator, watch runner, distiller — plus vault context injection."""
 
-from backend.core import vault
+from backend.core import store, vault
 
 ORCHESTRATOR = """You are Gardener, a helpful personal agent for one user.
 
@@ -85,9 +85,14 @@ Return ONLY the JSON array. No prose, no markdown fences."""
 
 
 def with_vault_context(system: str) -> str:
-    """Append the full current vault to a system prompt."""
+    """Append the calling user's current vault to a system prompt.
+
+    The active user comes from store.current_user() (set by the HTTP route /
+    watch runner before the agent loop runs) — this is how a per-user garden
+    reaches the hand-written spine loop without changing run_turn's signature.
+    Defaults to "sameer", so header-less callers keep the single-user behavior."""
     parts = [system, "", "## Current memory vault", ""]
-    files = vault.all_files()
+    files = vault.all_files(user_id=store.current_user())
     if not files:
         parts.append("(the vault is empty)")
     for path, content in sorted(files.items()):

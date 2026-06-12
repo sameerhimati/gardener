@@ -114,53 +114,62 @@ except Exception as _e:  # noqa: BLE001
 
 
 def execute_tool(name: str, tool_input: dict, session_id: str) -> str:
+    # Resolve the calling user from the session record. THIS is how the spine
+    # agent loop stays untouched: loop.run_turn passes only session_id, and we
+    # look up user_id here — so a user's tool calls write to THEIR garden.
+    user_id = store.session_user_id(session_id)
     events.log_event(
         "tool_call",
         {"name": name, "input": json.dumps(tool_input, default=str)[:500]},
         session_id,
+        user_id=user_id,
     )
     try:
-        result = _dispatch(name, tool_input or {}, session_id)
+        result = _dispatch(name, tool_input or {}, session_id, user_id)
     except Exception as e:
         result = f"ERROR: {type(e).__name__}: {e}"
     events.log_event(
         "tool_result",
         {"name": name, "result": str(result)[:500]},
         session_id,
+        user_id=user_id,
     )
     return result
 
 
-def _dispatch(name: str, tool_input: dict, session_id: str) -> str:
+def _dispatch(name: str, tool_input: dict, session_id: str, user_id: str) -> str:
     if name == "web_fetch":
         return _web_fetch(tool_input["url"])
     if name == "web_search":
         return _web_search(tool_input["query"], int(tool_input.get("count") or 5))
     if name == "vault_read":
         try:
-            return vault.read(tool_input["path"])
+            return vault.read(tool_input["path"], user_id=user_id)
         except FileNotFoundError:
             return f"ERROR: vault file not found: {tool_input['path']}"
     if name == "vault_write":
-        vault.write(tool_input["path"], tool_input["content"], source=_source(session_id))
+        vault.write(
+            tool_input["path"], tool_input["content"], source=_source(session_id), user_id=user_id
+        )
         return f"Wrote {tool_input['path']} ({len(tool_input['content'])} chars)"
     if name == "save_preference":
-        return _save_preference(tool_input["topic"], tool_input["fact"], session_id)
+        return _save_preference(tool_input["topic"], tool_input["fact"], session_id, user_id)
     if name == "spawn_watch":
         return _spawn_watch(
             tool_input["task"],
             int(tool_input.get("cadence_sec") or 120),
             session_id,
+            user_id,
             act_mode=tool_input.get("act_mode") or "off",
         )
     if name == "list_watches":
-        return json.dumps(store.list_watches(), indent=2, default=str)
+        return json.dumps(store.list_watches(user_id=user_id), indent=2, default=str)
     if name == "cited_read":
         return _cited_read()
     # Composio (Gmail/Calendar) tools dispatch here, still inside execute_tool's
     # event-logging wrapper — so the action shows up in the activity trail.
     if composio_client.is_composio_tool(name):
-        return composio_client.execute(name, tool_input, user_id=composio_client.USER_ID)
+        return composio_client.execute(name, tool_input, user_id=user_id)
     return f"ERROR: unknown tool: {name}"
 
 
@@ -248,46 +257,51 @@ def _web_search(query: str, count: int = 5) -> str:
 
 # ── save_preference ──────────────────────────────────────────────────────────
 
-def _save_preference(topic: str, fact: str, session_id: str) -> str:
+def _save_preference(topic: str, fact: str, session_id: str, user_id: str) -> str:
     slug = re.sub(r"[^a-z0-9-]+", "-", topic.lower()).strip("-") or "general"
     path = f"preferences/{slug}.md"
     today = date.today().isoformat()
     bullet = f"- {fact} (src: {_source(session_id)} {today})"
     try:
-        content = vault.read(path)
+        content = vault.read(path, user_id=user_id)
         content = re.sub(r"(?m)^updated:.*$", f"updated: {today}", content, count=1)
         if not content.endswith("\n"):
             content += "\n"
         content += bullet + "\n"
     except FileNotFoundError:
         content = f"---\ntopic: {slug}\nupdated: {today}\n---\n{bullet}\n"
-    vault.write(path, content, source=_source(session_id))
+    vault.write(path, content, source=_source(session_id), user_id=user_id)
     return f"Saved preference to {path}: {fact}"
 
 
 # ── spawn_watch ──────────────────────────────────────────────────────────────
 
-def _spawn_watch(task: str, cadence_sec: int, session_id: str, act_mode: str = "off") -> str:
+def _spawn_watch(
+    task: str, cadence_sec: int, session_id: str, user_id: str, act_mode: str = "off"
+) -> str:
     # A watch must never spawn watches: its own task text reads like a watch
     # request, so an unguarded model re-spawns itself every cycle (exponential
     # junk chats). Only the orchestrator (main chat) may plant new watches.
-    if any(w.get("session_id") == session_id for w in store.list_watches()):
+    # Scope the guards to THIS user's watches so one garden never sees another's.
+    user_watches = store.list_watches(user_id=user_id)
+    if any(w.get("session_id") == session_id for w in user_watches):
         return (
             "DENIED: you are a standing watch — you cannot spawn other watches. "
             "Just run your check and report."
         )
     # Near-duplicate guard: same task text already being watched.
-    for w in store.list_watches():
+    for w in user_watches:
         if w.get("status") == "active" and w.get("task", "").strip().lower() == task.strip().lower():
             return f"NOT SPAWNED: an active watch with this exact task already exists ({w['id']})."
     # Back-compat tolerance: unknown / legacy values (draft/send) → off.
     act_mode = act_mode if act_mode in ("off", "calendar", "discord") else "off"
-    watch = store.create_watch(task, cadence_sec, act_mode=act_mode)
+    watch = store.create_watch(task, cadence_sec, act_mode=act_mode, user_id=user_id)
     events.log_event(
         "watch_spawn",
         {"watch_id": watch["id"], "task": task, "cadence_sec": cadence_sec,
          "act_mode": act_mode, "ts": datetime.now(timezone.utc).isoformat()},
         session_id,
+        user_id=user_id,
     )
     return json.dumps(
         {"watch_id": watch["id"], "session_id": watch["session_id"], "task": task,

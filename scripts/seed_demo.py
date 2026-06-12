@@ -1,7 +1,7 @@
 """Seed a demo-ready state for Gardener. Idempotent — safe to run repeatedly.
 
 Seeds the exact setup the lint demo needs:
-  1. vault/preferences/housing.md with a belief ("Any size or layout is fine")
+  1. vault/sameer/preferences/housing.md with a belief ("Any size or layout is fine")
   2. events: a user_msg asking for a Zillow watch + a watch_steer that
      CONTRADICTS the vault belief ("only 3+ bedrooms, 1500+ sqft minimum")
      → this is what the contradiction lint rule catches on camera
@@ -28,7 +28,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-VAULT_HOUSING = REPO_ROOT / "vault" / "preferences" / "housing.md"
+# Sameer's seeded demo persona is the DEFAULT garden: vault/sameer/. The
+# header-less default user is "sameer", so the contradiction-lint replay (which
+# reads vault.all_files() with no user_id) audits exactly this file.
+VAULT_HOUSING = REPO_ROOT / "vault" / "sameer" / "preferences" / "housing.md"
 DATA_DIR = REPO_ROOT / "data"
 EVENTS_JSONL = DATA_DIR / "events.jsonl"
 WATCHES_JSON = DATA_DIR / "watches.json"
@@ -144,10 +147,10 @@ def main() -> int:
     # 1. Vault belief the steer will contradict (deterministic content → idempotent)
     VAULT_HOUSING.parent.mkdir(parents=True, exist_ok=True)
     if VAULT_HOUSING.exists() and VAULT_HOUSING.read_text() == HOUSING_MD:
-        print(f"[seed] vault/preferences/housing.md already seeded — skipping")
+        print(f"[seed] vault/sameer/preferences/housing.md already seeded — skipping")
     else:
         VAULT_HOUSING.write_text(HOUSING_MD)
-        seeded.append("vault/preferences/housing.md (belief: 'Any size or layout is fine')")
+        seeded.append("vault/sameer/preferences/housing.md (belief: 'Any size or layout is fine')")
 
     # 2. Watch (before events, so the steer can reference its session)
     watch = None

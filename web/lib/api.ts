@@ -2,6 +2,8 @@
 // Every call fails soft: network failures flip a shared health flag that the UI
 // renders as a thin "backend offline" banner — nothing here ever crashes the app.
 
+import { getUserId } from "./uid";
+
 // `||` not `??`: an empty NEXT_PUBLIC_API_URL exported by dev.sh must still fall back
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -86,11 +88,16 @@ export function isOnline(): boolean {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
+  // Per-browser identity: attach X-User-Id on EVERY request so the backend
+  // routes to this browser's isolated garden. Empty (SSR) → header omitted →
+  // backend defaults to "sameer".
+  const uid = getUserId();
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
+        ...(uid ? { "X-User-Id": uid } : {}),
         ...(init?.headers ?? {}),
       },
     });

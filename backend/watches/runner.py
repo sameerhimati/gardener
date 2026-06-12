@@ -25,13 +25,20 @@ def _now() -> datetime:
 
 def _run_agent_turn(session_id: str, message: str, system: str) -> str:
     """Resolve the agent loop the same way app.py does: hand-written loop first,
-    stub fallback until loop.py lands."""
+    stub fallback until loop.py lands. Binds the watch owner into the ambient
+    user context so prompts.with_vault_context injects THEIR vault (the spine
+    loop stays untouched)."""
     from backend.agent import loop, loop_stub
+    from backend.core import store
 
+    token = store.set_current_user(store.session_user_id(session_id))
     try:
-        return loop.run_turn(session_id, message, system=system)
-    except NotImplementedError:
-        return loop_stub.run_turn(session_id, message, system=system)
+        try:
+            return loop.run_turn(session_id, message, system=system)
+        except NotImplementedError:
+            return loop_stub.run_turn(session_id, message, system=system)
+    finally:
+        store.reset_current_user(token)
 
 
 def run_cycle(watch_id: str) -> dict:
@@ -92,15 +99,20 @@ def _parse_distilled(raw: str) -> list[dict]:
 
 
 def distill_steering(watch_id: str, message: str) -> None:
-    """Distill a steering message into preference bullets in the vault."""
-    distill_text(message, source=f"watch:{watch_id}")
+    """Distill a steering message into preference bullets in the watch owner's vault."""
+    from backend.core import store
+
+    watch = store.get_watch(watch_id)
+    user_id = store.session_user_id(watch.get("session_id", ""))
+    distill_text(message, source=f"watch:{watch_id}", user_id=user_id)
 
 
-def distill_text(text: str, source: str) -> list[dict]:
+def distill_text(text: str, source: str, user_id: str = "sameer") -> list[dict]:
     """Distill any user text (steering, onboarding answers) into the vault.
 
     Each {topic, fact} becomes a provenance-suffixed bullet appended to
     vault preferences/<topic>.md (created with frontmatter if missing).
+    Writes land in the given user's garden (default "sameer").
     Returns the list of {topic, fact} items written.
     """
     from backend.agent import prompts
@@ -128,7 +140,7 @@ def distill_text(text: str, source: str) -> list[dict]:
         bullet = f"- {fact} (src: {source} {today})"
 
         try:
-            content = vault.read(path)
+            content = vault.read(path, user_id=user_id)
         except FileNotFoundError:
             content = f"---\ntopic: {topic}\nupdated: {today}\n---\n"
 
@@ -138,7 +150,7 @@ def distill_text(text: str, source: str) -> list[dict]:
         # bump the frontmatter `updated:` date, keep everything else
         content = re.sub(r"(?m)^updated:.*$", f"updated: {today}", content, count=1)
         content = content.rstrip("\n") + "\n" + bullet + "\n"
-        vault.write(path, content, source=source)
+        vault.write(path, content, source=source, user_id=user_id)
         written.append({"topic": topic, "fact": fact})
     return written
 
@@ -168,7 +180,7 @@ async def _scheduler_loop() -> None:
 
     while True:
         try:
-            watches = store.list_watches() or []
+            watches = store.list_watches(user_id=None) or []  # every user's watches
         except Exception as exc:  # one bad tick never kills the scheduler
             print(f"[scheduler] failed to list watches: {exc}")
             watches = []

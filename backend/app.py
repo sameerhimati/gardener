@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")  # before any module reads env
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import Depends, FastAPI, Header, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
@@ -62,6 +62,27 @@ app.add_middleware(
 )
 
 
+# ── multi-tenant identity ─────────────────────────────────────────────────────
+# Each browser mints an opaque uuid (web/lib/uid.ts), stored in localStorage and
+# sent as X-User-Id on every request. We resolve it here, DEFAULTING TO "sameer"
+# when absent — so the seeded demo garden (vault/sameer/, the seeded watches, the
+# contradiction-lint replay) and any header-less caller (curl, the cron lint
+# worker) are exactly the "sameer" garden and keep working unchanged.
+
+import re as _re  # noqa: E402
+
+_SAFE_UID = _re.compile(r"[^a-zA-Z0-9_-]+")
+
+
+def current_user(x_user_id: str | None = Header(default=None)) -> str:
+    """Resolve the calling user from the X-User-Id header, default "sameer".
+    Sanitized to the same charset the vault accepts (no path-escape risk)."""
+    if not x_user_id or not x_user_id.strip():
+        return "sameer"
+    safe = _SAFE_UID.sub("", x_user_id.strip())
+    return safe or "sameer"
+
+
 class ChatIn(BaseModel):
     session_id: str | None = None
     message: str
@@ -83,25 +104,42 @@ class WatchPatch(BaseModel):
 
 
 def _run_turn(
-    session_id: str, message: str, system: str | None = None, image: str | None = None
+    session_id: str,
+    message: str,
+    system: str | None = None,
+    image: str | None = None,
+    user_id: str | None = None,
 ) -> str:
     """Sameer's loop if it exists, else the stub. Reimported fresh each request
-    so his edits land immediately under uvicorn --reload."""
+    so his edits land immediately under uvicorn --reload.
+
+    Binds the calling user into the ambient context (store.set_current_user)
+    BEFORE entering the loop, so prompts.with_vault_context injects THIS user's
+    vault — without touching the hand-written spine loop. Resolves user_id from
+    the session record when not passed (e.g. watch cycles)."""
+    uid = user_id or store.session_user_id(session_id)
+    token = store.set_current_user(uid)
     import backend.agent.loop as loop
 
     loop = importlib.reload(loop)
     try:
-        return loop.run_turn(session_id, message, system, image=image)
-    except NotImplementedError:
-        return loop_stub.run_turn(session_id, message, system)
+        try:
+            return loop.run_turn(session_id, message, system, image=image)
+        except NotImplementedError:
+            return loop_stub.run_turn(session_id, message, system)
+    finally:
+        store.reset_current_user(token)
 
 
 # ── chat ─────────────────────────────────────────────────────────────────────
 
 @app.post("/chat")
-def chat(body: ChatIn):
-    session_id = body.session_id or store.create_session(kind="main")
-    reply = _run_turn(session_id, body.message, image=body.image)
+def chat(body: ChatIn, user_id: str = Depends(current_user)):
+    # A new session is stamped with the caller's user_id; every tool call in the
+    # turn resolves that user_id from the session (see tools.execute_tool), so
+    # the spine loop signature is untouched.
+    session_id = body.session_id or store.create_session(kind="main", user_id=user_id)
+    reply = _run_turn(session_id, body.message, image=body.image, user_id=user_id)
     return {"session_id": session_id, "reply": reply}
 
 
@@ -113,17 +151,18 @@ def session_messages(session_id: str):
 # ── watches ──────────────────────────────────────────────────────────────────
 
 @app.get("/watches")
-def watches():
-    return store.list_watches()
+def watches(user_id: str = Depends(current_user)):
+    return store.list_watches(user_id=user_id)
 
 
 @app.post("/watches")
-def create_watch(body: WatchIn):
-    watch = store.create_watch(body.task, body.cadence_sec)
+def create_watch(body: WatchIn, user_id: str = Depends(current_user)):
+    watch = store.create_watch(body.task, body.cadence_sec, user_id=user_id)
     events.log_event(
         "watch_spawn",
         {"watch_id": watch["id"], "task": body.task, "cadence_sec": body.cadence_sec, "manual": True},
         watch["session_id"],
+        user_id=user_id,
     )
     return watch
 
@@ -144,7 +183,10 @@ def run_watch(watch_id: str):
 @app.post("/watches/{watch_id}/message")
 def steer_watch(watch_id: str, body: MessageIn):
     watch = _get_watch_or_404(watch_id)
-    events.log_event("watch_steer", {"watch_id": watch_id, "text": body.message}, watch["session_id"])
+    wuid = watch.get("user_id") or "sameer"
+    events.log_event(
+        "watch_steer", {"watch_id": watch_id, "text": body.message}, watch["session_id"], user_id=wuid
+    )
 
     # distill steering into the preference vault (module owned by another agent)
     try:
@@ -249,14 +291,14 @@ def connectors():
 # ── vault ────────────────────────────────────────────────────────────────────
 
 @app.get("/vault")
-def vault_index():
-    return vault.list_files()
+def vault_index(user_id: str = Depends(current_user)):
+    return vault.list_files(user_id=user_id)
 
 
 @app.get("/vault/file")
-def vault_file(path: str):
+def vault_file(path: str, user_id: str = Depends(current_user)):
     try:
-        return {"path": path, "content": vault.read(path)}
+        return {"path": path, "content": vault.read(path, user_id=user_id)}
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail=f"no such vault file: {path}")
 
@@ -267,12 +309,12 @@ class VaultFileIn(BaseModel):
 
 
 @app.put("/vault/file")
-def vault_file_write(body: VaultFileIn):
+def vault_file_write(body: VaultFileIn, user_id: str = Depends(current_user)):
     """Persist an edited vault note. vault.write logs a memory_write event so the
     user's hand-edit shows up in the event log just like the agent's writes."""
     try:
-        vault.write(body.path, body.content, source="ui-edit")
-        return {"path": body.path, "content": vault.read(body.path)}
+        vault.write(body.path, body.content, source="ui-edit", user_id=user_id)
+        return {"path": body.path, "content": vault.read(body.path, user_id=user_id)}
     except ValueError:
         # _full_path refuses paths that escape the vault root
         raise HTTPException(status_code=400, detail=f"bad vault path: {body.path}")
@@ -370,20 +412,22 @@ class OnboardingIn(BaseModel):
 
 
 @app.post("/onboarding/turn")
-def onboarding_turn(body: OnboardingIn):
+def onboarding_turn(body: OnboardingIn, user_id: str = Depends(current_user)):
     """One interactive onboarding exchange: the real agent replies (it can answer
     questions back), and the answer is distilled into the vault in the same call."""
-    session_id = body.session_id or store.create_session(kind="onboarding", title="Onboarding")
+    session_id = body.session_id or store.create_session(
+        kind="onboarding", title="Onboarding", user_id=user_id
+    )
     system = prompts.ONBOARDING
     if body.question:
         system += f'\n\nThe interview question on screen: "{body.question}"'
-    reply = _run_turn(session_id, body.message, system)
+    reply = _run_turn(session_id, body.message, system, user_id=user_id)
 
     planted = []
     try:
         from backend.watches import runner
 
-        planted = runner.distill_text(body.message, source="onboarding")
+        planted = runner.distill_text(body.message, source="onboarding", user_id=user_id)
     except Exception as e:
         print(f"[app] warning: onboarding distill failed: {e}")
     return {"session_id": session_id, "reply": reply, "written": planted}
@@ -397,12 +441,12 @@ class DistillIn(BaseModel):
 
 
 @app.post("/distill")
-def distill(body: DistillIn):
-    events.log_event("user_msg", {"text": body.text, "source": body.source})
+def distill(body: DistillIn, user_id: str = Depends(current_user)):
+    events.log_event("user_msg", {"text": body.text, "source": body.source}, user_id=user_id)
     try:
         from backend.watches import runner
 
-        return {"written": runner.distill_text(body.text, body.source)}
+        return {"written": runner.distill_text(body.text, body.source, user_id=user_id)}
     except Exception as e:
         print(f"[app] warning: distill failed: {e}")
         return {"written": [], "error": str(e)}
