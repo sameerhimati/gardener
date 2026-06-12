@@ -30,3 +30,4 @@ session-handoff.md
 .DS_Store
 .idea/
 .vscode/
+.gstack/
