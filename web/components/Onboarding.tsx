@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { distill, onboardingTurn, type PlantedFact } from "@/lib/api";
+import { distill, onboardingBasics, onboardingTurn, type PlantedFact } from "@/lib/api";
 import { Markdown } from "@/lib/markdown";
 import ThinkingDots from "@/components/ThinkingDots";
 import GardenEntrance from "@/components/GardenEntrance";
@@ -365,13 +365,11 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
     const trimmedName = name.trim();
     const trimmedZip = zip.trim();
     if (savingBasics) return;
-    const parts: string[] = [];
-    if (trimmedName) parts.push(`My name is ${trimmedName}.`);
-    if (trimmedZip) parts.push(`My zip code is ${trimmedZip}.`);
-    if (parts.length > 0) {
+    if (trimmedName || trimmedZip) {
       setSavingBasics(true);
       try {
-        await distill(parts.join(" "), "onboarding");
+        // Deterministic plant — lands name + zip reliably (distill drops the name).
+        await onboardingBasics(trimmedName, trimmedZip);
       } catch {
         // fail soft — the basics aren't load-bearing, keep moving
       } finally {

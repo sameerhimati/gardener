@@ -7,6 +7,7 @@ import {
   runWatch,
   sendChat,
   sendWatchMessage,
+  updateWatch,
   type Message,
   type Watch,
 } from "@/lib/api";
@@ -16,6 +17,18 @@ import ThinkingDots from "@/components/ThinkingDots";
 import WatchActivityTrail from "@/components/WatchActivityTrail";
 
 const MAIN_SESSION_KEY = "gardener_main_session_id";
+
+// How often a watch re-runs. Labels are friendly; values are seconds for the API.
+const CADENCE_OPTIONS: { label: string; sec: number }[] = [
+  { label: "every 5m", sec: 300 },
+  { label: "every 15m", sec: 900 },
+  { label: "every 30m", sec: 1800 },
+  { label: "hourly", sec: 3600 },
+  { label: "every 6h", sec: 21600 },
+  { label: "every 12h", sec: 43200 },
+  { label: "once a day", sec: 86400 },
+];
+const DEFAULT_CADENCE_SEC = 3600;
 
 interface ChatPaneProps {
   selected: string; // "main" or a watch id
@@ -83,6 +96,17 @@ export default function ChatPane({
   const [steering, setSteering] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
   const [image, setImage] = useState<string | null>(null); // data: URI for a dropped/pasted image
+  const [dragOver, setDragOver] = useState(false); // dragging an image over the whole pane
+
+  // Per-watch cadence, seeded from the watch and updated optimistically; the
+  // 3s watch poll upstream reconciles it back to the server value.
+  const [cadenceSec, setCadenceSec] = useState<number>(
+    watch?.cadence_sec ?? DEFAULT_CADENCE_SEC,
+  );
+  const [savingCadence, setSavingCadence] = useState(false);
+  useEffect(() => {
+    setCadenceSec(watch?.cadence_sec ?? DEFAULT_CADENCE_SEC);
+  }, [watch?.id, watch?.cadence_sec]);
 
   useEffect(() => {
     // switching conversations: clear transient state
@@ -90,6 +114,7 @@ export default function ChatPane({
     setSendError(false);
     setSteering(false);
     setImage(null);
+    setDragOver(false);
   }, [selected]);
 
   // A garden fact was clicked: drop its text into the composer.
@@ -186,6 +211,23 @@ export default function ChatPane({
     }
   }, [watch, runningNow, refresh]);
 
+  const onChangeCadence = useCallback(
+    async (sec: number) => {
+      if (!watch || savingCadence) return;
+      const prev = cadenceSec;
+      setCadenceSec(sec); // optimistic — header reflects it instantly
+      setSavingCadence(true);
+      try {
+        await updateWatch(watch.id, { cadence_sec: sec });
+      } catch {
+        setCadenceSec(prev); // fail soft — roll back
+      } finally {
+        setSavingCadence(false);
+      }
+    },
+    [watch, savingCadence, cadenceSec],
+  );
+
   const emptyState = isMain ? (
     <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
       <p className="text-sm text-faint">Nothing planted yet.</p>
@@ -205,7 +247,36 @@ export default function ChatPane({
   );
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col bg-bg">
+    <section
+      // Whole pane is a drop target — drop a screenshot anywhere to attach it.
+      // Both onDragOver AND onDrop must preventDefault, or the browser navigates
+      // to the dropped image instead of attaching it.
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types?.includes("Files")) {
+          e.preventDefault();
+          setDragOver(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        // Only clear when the cursor actually leaves the pane, not on child enter.
+        if (e.currentTarget === e.target) setDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file) readImageFile(file);
+      }}
+      className="relative flex min-w-0 flex-1 flex-col bg-bg"
+    >
+      {/* calm affordance while a file is dragged over the pane */}
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-moss/60 bg-moss/5 backdrop-blur-[1px]">
+          <span className="rounded-full bg-bg/90 px-4 py-2 text-sm font-medium text-moss-deep shadow-sm">
+            Drop image to attach
+          </span>
+        </div>
+      )}
       {/* header */}
       <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-edge px-5">
         <div className="min-w-0">
@@ -219,13 +290,36 @@ export default function ChatPane({
           )}
         </div>
         {!isMain && watch && (
-          <button
-            onClick={onRunNow}
-            disabled={runningNow}
-            className="shrink-0 rounded-md border border-edge px-3 py-1.5 text-xs text-faint transition-colors hover:border-moss/50 hover:text-moss disabled:opacity-50"
-          >
-            {runningNow ? "Running…" : "Run now"}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {/* how often this watch re-runs */}
+            <label className="flex items-center gap-1.5 text-[11px] text-dim">
+              <span className="hidden sm:inline">Runs</span>
+              <select
+                value={cadenceSec}
+                onChange={(e) => onChangeCadence(Number(e.target.value))}
+                disabled={savingCadence}
+                aria-label="How often this watch runs"
+                className="rounded-md border border-edge bg-bg px-2 py-1.5 text-xs text-faint outline-none transition-colors hover:border-moss/50 focus:border-moss/50 disabled:opacity-50"
+              >
+                {/* If the server has a non-standard cadence, keep it selectable. */}
+                {!CADENCE_OPTIONS.some((o) => o.sec === cadenceSec) && (
+                  <option value={cadenceSec}>{`every ${cadenceSec}s`}</option>
+                )}
+                {CADENCE_OPTIONS.map((o) => (
+                  <option key={o.sec} value={o.sec}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={onRunNow}
+              disabled={runningNow}
+              className="rounded-md border border-edge px-3 py-1.5 text-xs text-faint transition-colors hover:border-moss/50 hover:text-moss disabled:opacity-50"
+            >
+              {runningNow ? "Running…" : "Run now"}
+            </button>
+          </div>
         )}
       </header>
 
@@ -271,17 +365,7 @@ export default function ChatPane({
               </span>
             )}
           </div>
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const file = e.dataTransfer.files?.[0];
-              if (file) readImageFile(file);
-            }}
-            className="rounded-xl border border-edge bg-bg px-3 py-2 shadow-sm transition-colors focus-within:border-moss/50"
-          >
+          <div className="rounded-xl border border-edge bg-bg px-3 py-2 shadow-sm transition-colors focus-within:border-moss/50">
             {image && (
               <div className="mb-2 flex items-center gap-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}

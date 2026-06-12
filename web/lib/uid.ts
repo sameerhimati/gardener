@@ -15,6 +15,14 @@ const KEY = "gardener_uid";
 export function getUserId(): string {
   if (typeof window === "undefined") return "";
   try {
+    // Demo override: ?u=<id> pins this browser to a specific garden and
+    // persists it. Load the app with ?u=sameer to see the seeded demo
+    // persona (housing/gpu/etc.) instead of a fresh empty garden.
+    const pinned = new URLSearchParams(window.location.search).get("u");
+    if (pinned) {
+      window.localStorage.setItem(KEY, pinned);
+      return pinned;
+    }
     let uid = window.localStorage.getItem(KEY);
     if (!uid) {
       uid = newUid();

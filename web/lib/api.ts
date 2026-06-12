@@ -214,6 +214,19 @@ export function distill(
   return post<{ written: PlantedFact[] }>("/distill", { text, source });
 }
 
+/** Deterministically plant name + zip into the vault. Unlike the fuzzy
+ *  `/distill` extractor (which has no name concept), this endpoint lands both
+ *  reliably. POST /onboarding/basics {name?, zip?} → {planted:[{topic,fact}]}. */
+export function onboardingBasics(
+  name: string,
+  zip: string,
+): Promise<{ planted: PlantedFact[] }> {
+  return post<{ planted: PlantedFact[] }>("/onboarding/basics", {
+    ...(name ? { name } : {}),
+    ...(zip ? { zip } : {}),
+  });
+}
+
 export interface OnboardingTurn {
   session_id: string;
   reply: string;
@@ -246,6 +259,15 @@ export function resumeWatch(watchId: string): Promise<Watch> {
 }
 
 export function editWatch(
+  watchId: string,
+  fields: { task?: string; cadence_sec?: number },
+): Promise<Watch> {
+  return patch<Watch>(`/watches/${encodeURIComponent(watchId)}`, fields);
+}
+
+/** Update a watch's fields (e.g. cadence). PATCH /watches/{id} → updated watch.
+ *  Shares the X-User-Id-attaching request path. */
+export function updateWatch(
   watchId: string,
   fields: { task?: string; cadence_sec?: number },
 ): Promise<Watch> {
