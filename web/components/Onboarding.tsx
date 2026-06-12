@@ -7,9 +7,15 @@ import { Markdown } from "@/lib/markdown";
 import ThinkingDots from "@/components/ThinkingDots";
 
 export const ONBOARDED_KEY = "gardener_onboarded";
+// Must match MAIN_SESSION_KEY in ChatPane — carrying the onboarding session here
+// makes the main chat continue the same conversation (no "Nothing planted yet").
+const MAIN_SESSION_KEY = "gardener_main_session_id";
+
+const INTRO =
+  "Your memory is a garden — everything I learn about you, growing as a vault you can read. I'm the gardener: I plant, I weed the contradictions, I keep it true.";
 
 const QUESTIONS = [
-  "Before we plant anything — who am I gardening for? Tell me about yourself.",
+  "Who am I gardening for? Tell me about yourself.",
   "What are you actively looking for or deciding on right now?",
   "What should I keep an eye on for you while you're away?",
   "Any hard preferences I should never forget?",
@@ -106,10 +112,13 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
   const [leaving, setLeaving] = useState(false);
 
   const finish = useCallback(() => {
+    // Carry the onboarding session into the main chat so the conversation +
+    // planted facts are already there (only if they actually talked).
+    if (sessionId) localStorage.setItem(MAIN_SESSION_KEY, sessionId);
     localStorage.setItem(ONBOARDED_KEY, "1");
     setLeaving(true);
     setTimeout(onDone, 380);
-  }, [onDone]);
+  }, [onDone, sessionId]);
 
   const submit = useCallback(async () => {
     const text = input.trim();
@@ -225,6 +234,16 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
                   />
                 ))}
               </div>
+
+              {/* the hook — only on the first step */}
+              {step === 0 && (
+                <div className="mb-7">
+                  <p className="text-[1.7rem] font-semibold leading-tight tracking-tight text-ink">
+                    Welcome to Gardener — the agent harness made for you.
+                  </p>
+                  <p className="mt-3 text-sm leading-relaxed text-faint">{INTRO}</p>
+                </div>
+              )}
 
               {/* Gardener asking */}
               <p className="text-[1.45rem] font-medium leading-snug tracking-tight text-ink">
