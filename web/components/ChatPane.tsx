@@ -13,12 +13,15 @@ import {
 import { relativeTime, usePolling } from "@/lib/hooks";
 import { Markdown } from "@/lib/markdown";
 import ThinkingDots from "@/components/ThinkingDots";
+import WatchActivityTrail from "@/components/WatchActivityTrail";
 
 const MAIN_SESSION_KEY = "gardener_main_session_id";
 
 interface ChatPaneProps {
   selected: string; // "main" or a watch id
   watch: Watch | null; // resolved watch when selected is a watch id
+  injectedText?: string; // text pushed in from clicking a garden fact
+  onConsumeInjected?: () => void;
 }
 
 function Bubble({ message }: { message: Message }) {
@@ -50,7 +53,12 @@ function Bubble({ message }: { message: Message }) {
   );
 }
 
-export default function ChatPane({ selected, watch }: ChatPaneProps) {
+export default function ChatPane({
+  selected,
+  watch,
+  injectedText,
+  onConsumeInjected,
+}: ChatPaneProps) {
   const isMain = selected === "main";
 
   // Main chat session id lives in localStorage from the first /chat response.
@@ -74,13 +82,29 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
   const [sendError, setSendError] = useState(false);
   const [steering, setSteering] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
+  const [image, setImage] = useState<string | null>(null); // data: URI for a dropped/pasted image
 
   useEffect(() => {
     // switching conversations: clear transient state
     setPending([]);
     setSendError(false);
     setSteering(false);
+    setImage(null);
   }, [selected]);
+
+  // A garden fact was clicked: drop its text into the composer.
+  useEffect(() => {
+    if (!injectedText) return;
+    setInput((cur) => (cur ? `${cur}\n${injectedText}` : injectedText));
+    onConsumeInjected?.();
+  }, [injectedText, onConsumeInjected]);
+
+  const readImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => setImage(reader.result as string);
+    reader.readAsDataURL(file);
+  }, []);
 
   useEffect(() => {
     if (!serverMessages || pending.length === 0) return;
@@ -106,17 +130,20 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || sending) return;
+    if ((!text && !image) || sending) return;
     if (!isMain && !watch) return; // watch not resolved yet — don't strand a message
+    const sentImage = image;
     setSending(true);
     setSendError(false);
     setInput("");
+    setImage(null);
     const now = new Date().toISOString();
-    setPending((cur) => [...cur, { role: "user", content: text, ts: now }]);
+    const shown = sentImage ? `${text}\n🖼️ image attached`.trim() : text;
+    setPending((cur) => [...cur, { role: "user", content: shown, ts: now }]);
 
     try {
       if (isMain) {
-        const res = await sendChat(mainSession, text);
+        const res = await sendChat(mainSession, text || "(see image)", sentImage);
         if (!mainSession && res.session_id) {
           localStorage.setItem(MAIN_SESSION_KEY, res.session_id);
           setMainSession(res.session_id);
@@ -144,7 +171,7 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
     } finally {
       setSending(false);
     }
-  }, [input, sending, isMain, mainSession, watch, refresh]);
+  }, [input, image, sending, isMain, mainSession, watch, refresh]);
 
   const onRunNow = useCallback(async () => {
     if (!watch || runningNow) return;
@@ -202,6 +229,9 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
         )}
       </header>
 
+      {/* what the worker actually did on the web */}
+      {!isMain && watch && <WatchActivityTrail watchId={watch.id} />}
+
       {/* messages */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {messages.length === 0 ? (
@@ -241,31 +271,63 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
               </span>
             )}
           </div>
-          <div className="flex items-end gap-2 rounded-xl border border-edge bg-bg px-3 py-2 shadow-sm transition-colors focus-within:border-moss/50">
-            <textarea
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files?.[0];
+              if (file) readImageFile(file);
+            }}
+            className="rounded-xl border border-edge bg-bg px-3 py-2 shadow-sm transition-colors focus-within:border-moss/50"
+          >
+            {image && (
+              <div className="mb-2 flex items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={image}
+                  alt="attached"
+                  className="h-12 w-12 rounded-md border border-edge object-cover"
+                />
+                <button
+                  onClick={() => setImage(null)}
+                  className="text-[11px] text-dim underline hover:text-faint"
+                >
+                  remove
+                </button>
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <textarea
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onPaste={(e) => {
+                  const file = e.clipboardData.files?.[0];
+                  if (file && file.type.startsWith("image/")) readImageFile(file);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                placeholder={
+                  isMain
+                    ? "Ask Gardener anything — or drop in an image…"
+                    : "Steer this watch — e.g. “only 3+ bd, 1500+ sqft”"
                 }
-              }}
-              placeholder={
-                isMain
-                  ? "Ask Gardener anything…"
-                  : "Steer this watch — e.g. “only 3+ bd, 1500+ sqft”"
-              }
-              className="max-h-40 min-h-[24px] flex-1 resize-none bg-transparent text-sm text-ink outline-none placeholder:text-dim"
-            />
-            <button
-              onClick={send}
-              disabled={sending || input.trim() === ""}
-              className="shrink-0 rounded-lg bg-moss px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-moss-deep disabled:opacity-40"
-            >
-              {sending ? "…" : "Send"}
-            </button>
+                className="max-h-40 min-h-[24px] flex-1 resize-none bg-transparent text-sm text-ink outline-none placeholder:text-dim"
+              />
+              <button
+                onClick={send}
+                disabled={sending || (input.trim() === "" && !image)}
+                className="shrink-0 rounded-lg bg-moss px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-moss-deep disabled:opacity-40"
+              >
+                {sending ? "…" : "Send"}
+              </button>
+            </div>
           </div>
         </div>
       </footer>

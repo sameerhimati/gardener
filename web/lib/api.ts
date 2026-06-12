@@ -53,6 +53,14 @@ export interface ChatResponse {
   reply: string;
 }
 
+export interface WatchEvent {
+  event_id: string;
+  session_id: string;
+  ts: string;
+  kind: "tool_call" | "tool_result" | "watch_cycle";
+  payload: Record<string, unknown>;
+}
+
 // ---------- backend health (shared store for the offline banner) ----------
 
 let online = true;
@@ -122,11 +130,19 @@ function del<T>(path: string): Promise<T> {
 export function sendChat(
   sessionId: string | null,
   message: string,
+  image?: string | null,
 ): Promise<ChatResponse> {
   return post<ChatResponse>("/chat", {
     ...(sessionId ? { session_id: sessionId } : {}),
     message,
+    ...(image ? { image } : {}),
   });
+}
+
+export function getWatchEvents(watchId: string): Promise<WatchEvent[]> {
+  return request<WatchEvent[]>(
+    `/watches/${encodeURIComponent(watchId)}/events`,
+  );
 }
 
 export function getMessages(sessionId: string): Promise<Message[]> {

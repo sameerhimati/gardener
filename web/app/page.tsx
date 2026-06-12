@@ -13,6 +13,8 @@ import Onboarding, { ONBOARDED_KEY } from "@/components/Onboarding";
 export default function Home() {
   // "main" or a watch id
   const [selected, setSelected] = useState("main");
+  // text pushed into the composer when a garden fact is clicked
+  const [injectedText, setInjectedText] = useState("");
 
   // First run: no onboarded flag in localStorage → interview flow over the app.
   const [onboarding, setOnboarding] = useState(false);
@@ -49,8 +51,18 @@ export default function Home() {
             selected={selected}
             onSelect={setSelected}
           />
-          <ChatPane selected={selected} watch={selectedWatch} />
-          <RightRail />
+          <ChatPane
+            selected={selected}
+            watch={selectedWatch}
+            injectedText={injectedText}
+            onConsumeInjected={() => setInjectedText("")}
+          />
+          <RightRail
+            onFactClick={(path, snippet) => {
+              setSelected("main");
+              setInjectedText(`About ${path}: ${snippet}`);
+            }}
+          />
         </div>
       </div>
     </MotionConfig>

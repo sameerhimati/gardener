@@ -8,7 +8,11 @@ import LintTab from "@/components/LintTab";
 
 type Tab = "garden" | "lint";
 
-export default function RightRail() {
+export default function RightRail({
+  onFactClick,
+}: {
+  onFactClick?: (path: string, snippet: string) => void;
+}) {
   const [tab, setTab] = useState<Tab>("garden");
 
   // Findings are polled here so the Lint tab badge stays live even while the
@@ -49,7 +53,7 @@ export default function RightRail() {
 
       <div className="min-h-0 flex-1">
         {tab === "garden" ? (
-          <GardenTab />
+          <GardenTab onFactClick={onFactClick} />
         ) : (
           <LintTab findings={findings} refresh={refresh} />
         )}
