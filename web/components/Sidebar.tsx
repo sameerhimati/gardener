@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { Watch } from "@/lib/api";
+import {
+  type Watch,
+  pauseWatch,
+  resumeWatch,
+  editWatch,
+  deleteWatch,
+} from "@/lib/api";
 import { relativeTime } from "@/lib/hooks";
 import { ONBOARDED_KEY } from "@/components/Onboarding";
 
@@ -33,6 +39,26 @@ export default function Sidebar({ watches, selected, onSelect }: SidebarProps) {
   // a cycle just ran.
   const prevRuns = useRef<Map<string, string | null>>(new Map());
   const [pulsing, setPulsing] = useState<Set<string>>(new Set());
+
+  // Inline edit: which watch id is being edited + its draft fields.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draftTask, setDraftTask] = useState("");
+  const [draftCadence, setDraftCadence] = useState("");
+
+  function beginEdit(w: Watch) {
+    setEditing(w.id);
+    setDraftTask(w.task);
+    setDraftCadence(String(w.cadence_sec ?? 120));
+  }
+
+  async function saveEdit(id: string) {
+    const cadence = parseInt(draftCadence, 10);
+    await editWatch(id, {
+      task: draftTask.trim() || undefined,
+      cadence_sec: Number.isFinite(cadence) ? cadence : undefined,
+    }).catch(() => {});
+    setEditing(null);
+  }
 
   useEffect(() => {
     if (!watches) return;
@@ -96,42 +122,109 @@ export default function Sidebar({ watches, selected, onSelect }: SidebarProps) {
         )}
 
         <AnimatePresence initial={false}>
-        {watches?.map((w) => (
-          <motion.button
+        {watches?.map((w) => {
+          const paused = w.status === "paused";
+          return (
+          <motion.div
             key={w.id}
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -10 }}
             transition={{ duration: 0.25, ease: "easeOut" }}
-            onClick={() => onSelect(w.id)}
-            className={`group rounded-md px-3 py-2 text-left transition-colors ${
-              selected === w.id
-                ? "bg-raised"
-                : "hover:bg-hover"
+            className={`group rounded-md transition-colors ${
+              selected === w.id ? "bg-raised" : "hover:bg-hover"
             }`}
           >
-            <span className="flex items-start gap-2">
-              <span
-                className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${statusColor(
-                  w.status,
-                )} ${pulsing.has(w.id) ? "animate-cycle-pulse" : ""}`}
-                title={w.status}
-              />
-              <span className="min-w-0">
+            <button
+              onClick={() => onSelect(w.id)}
+              className={`block w-full rounded-md px-3 py-2 text-left ${
+                paused ? "opacity-60" : ""
+              }`}
+            >
+              <span className="flex items-start gap-2">
                 <span
-                  className={`block truncate text-sm ${
-                    selected === w.id ? "text-ink" : "text-faint group-hover:text-ink"
-                  }`}
-                >
-                  {w.task}
-                </span>
-                <span className="block text-[11px] text-dim">
-                  {relativeTime(w.last_run)}
+                  className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${statusColor(
+                    w.status,
+                  )} ${pulsing.has(w.id) ? "animate-cycle-pulse" : ""}`}
+                  title={w.status}
+                />
+                <span className="min-w-0">
+                  <span
+                    className={`block truncate text-sm ${
+                      selected === w.id ? "text-ink" : "text-faint group-hover:text-ink"
+                    }`}
+                  >
+                    {w.task}
+                  </span>
+                  <span className="block text-[11px] text-dim">
+                    {paused ? "paused" : relativeTime(w.last_run)}
+                  </span>
                 </span>
               </span>
-            </span>
-          </motion.button>
-        ))}
+            </button>
+
+            {/* controls: revealed on hover (or while editing this watch) */}
+            {editing === w.id ? (
+              <div className="flex flex-col gap-1.5 px-3 pb-2 pt-0.5">
+                <input
+                  value={draftTask}
+                  onChange={(e) => setDraftTask(e.target.value)}
+                  placeholder="task"
+                  className="rounded border border-edge bg-surface px-2 py-1 text-xs text-ink outline-none focus:border-moss"
+                />
+                <input
+                  value={draftCadence}
+                  onChange={(e) => setDraftCadence(e.target.value)}
+                  placeholder="cadence (sec)"
+                  inputMode="numeric"
+                  className="rounded border border-edge bg-surface px-2 py-1 text-xs text-ink outline-none focus:border-moss"
+                />
+                <div className="flex gap-2 text-[11px]">
+                  <button
+                    onClick={() => saveEdit(w.id)}
+                    className="text-moss-deep hover:text-moss"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditing(null)}
+                    className="text-dim hover:text-faint"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 px-3 pb-1.5 text-[11px] text-dim opacity-0 transition-opacity group-hover:opacity-100">
+                <button
+                  onClick={() =>
+                    (paused ? resumeWatch(w.id) : pauseWatch(w.id)).catch(() => {})
+                  }
+                  className="hover:text-faint"
+                >
+                  {paused ? "Resume" : "Pause"}
+                </button>
+                <button
+                  onClick={() => beginEdit(w)}
+                  className="hover:text-faint"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm(`Delete watch "${w.task}"?`)) {
+                      deleteWatch(w.id).catch(() => {});
+                    }
+                  }}
+                  className="hover:text-rust"
+                >
+                  Delete
+                </button>
+              </div>
+            )}
+          </motion.div>
+          );
+        })}
         </AnimatePresence>
       </nav>
 

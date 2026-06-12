@@ -12,6 +12,7 @@ export interface Watch {
   task: string;
   session_id: string;
   status: string;
+  cadence_sec?: number;
   last_run: string | null;
   last_result?: string | null;
 }
@@ -103,6 +104,17 @@ function post<T>(path: string, body?: unknown): Promise<T> {
     method: "POST",
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+function patch<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+function del<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
 }
 
 // ---------- fetchers (one per endpoint) ----------
@@ -200,4 +212,23 @@ export function onboardingTurn(
 
 export function createWatch(task: string): Promise<Watch> {
   return post<Watch>("/watches", { task });
+}
+
+export function pauseWatch(watchId: string): Promise<Watch> {
+  return post<Watch>(`/watches/${encodeURIComponent(watchId)}/pause`);
+}
+
+export function resumeWatch(watchId: string): Promise<Watch> {
+  return post<Watch>(`/watches/${encodeURIComponent(watchId)}/resume`);
+}
+
+export function editWatch(
+  watchId: string,
+  fields: { task?: string; cadence_sec?: number },
+): Promise<Watch> {
+  return patch<Watch>(`/watches/${encodeURIComponent(watchId)}`, fields);
+}
+
+export function deleteWatch(watchId: string): Promise<{ ok: boolean }> {
+  return del<{ ok: boolean }>(`/watches/${encodeURIComponent(watchId)}`);
 }

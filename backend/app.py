@@ -67,6 +67,11 @@ class MessageIn(BaseModel):
     message: str
 
 
+class WatchPatch(BaseModel):
+    task: str | None = None
+    cadence_sec: int | None = None
+
+
 def _run_turn(session_id: str, message: str, system: str | None = None) -> str:
     """Sameer's loop if it exists, else the stub. Reimported fresh each request
     so his edits land immediately under uvicorn --reload."""
@@ -144,6 +149,40 @@ def steer_watch(watch_id: str, body: MessageIn):
     # or every steering message would appear twice in the watch chat.
     reply = _run_turn(watch["session_id"], body.message, system)
     return {"reply": reply}
+
+
+@app.post("/watches/{watch_id}/pause")
+def pause_watch(watch_id: str):
+    watch = _get_watch_or_404(watch_id)
+    store.update_watch(watch_id, status="paused")
+    events.log_event("watch_pause", {"watch_id": watch_id}, watch["session_id"])
+    return store.get_watch(watch_id)
+
+
+@app.post("/watches/{watch_id}/resume")
+def resume_watch(watch_id: str):
+    watch = _get_watch_or_404(watch_id)
+    store.update_watch(watch_id, status="active")
+    events.log_event("watch_resume", {"watch_id": watch_id}, watch["session_id"])
+    return store.get_watch(watch_id)
+
+
+@app.patch("/watches/{watch_id}")
+def edit_watch(watch_id: str, body: WatchPatch):
+    watch = _get_watch_or_404(watch_id)
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if fields:
+        store.update_watch(watch_id, **fields)
+    events.log_event("watch_edit", {"watch_id": watch_id, **fields}, watch["session_id"])
+    return store.get_watch(watch_id)
+
+
+@app.delete("/watches/{watch_id}")
+def delete_watch(watch_id: str):
+    watch = _get_watch_or_404(watch_id)
+    store.delete_watch(watch_id)
+    events.log_event("watch_delete", {"watch_id": watch_id}, watch["session_id"])
+    return {"ok": True}
 
 
 def _get_watch_or_404(watch_id: str) -> dict:

@@ -107,3 +107,12 @@ def update_watch(watch_id: str, **fields) -> None:
             raise KeyError(f"no such watch: {watch_id}")
         watches[watch_id].update(fields)
         _write_json(WATCHES_PATH, watches)
+
+
+def delete_watch(watch_id: str) -> None:
+    with _lock:
+        watches = _read_json(WATCHES_PATH, {})
+        if watch_id not in watches:
+            raise KeyError(f"no such watch: {watch_id}")
+        watches.pop(watch_id)
+        _write_json(WATCHES_PATH, watches)
