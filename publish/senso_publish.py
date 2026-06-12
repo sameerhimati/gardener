@@ -2,10 +2,17 @@
 
 Builds "What Gardener learned and corrected, with receipts" from lint findings
 and recent memory_write events, writes it to data/changelog.md, then ships it
-with the Senso CLI per docs/senso-cited.md (kb create-raw → engine publish).
+live to cited.md with the Senso CLI (`senso engine publish`).
 
 Gracefully no-ops (with instructions) if SENSO_API_KEY is unset or the `senso`
 CLI is not installed. Run from the repo root: python publish/senso_publish.py
+
+Senso CLI v0.11.1 invariants (verified 2026-06-12):
+  - `engine publish` needs a geo_question_id, raw_markdown, and seo_title.
+    A geo_question_id is created/reused via `senso questions list|create`.
+  - The Cited.md destination must be selected for generation before publish:
+    `generate update-settings --data {publishers:[<cited-md publisher_id>]}`.
+  - It returns a public cited.md URL we capture for the demo.
 """
 
 from __future__ import annotations
@@ -167,7 +174,70 @@ def build_changelog(findings: list[dict], memory_writes: list[dict]) -> str:
     return "\n".join(lines)
 
 
-# ── Senso CLI publish (docs/senso-cited.md §3c) ──────────────────────────────
+# ── Senso CLI publish (engine publish → cited.md) ────────────────────────────
+
+# The shared "Cited.md" citeables destination (from `senso destinations list`).
+CITED_MD_PUBLISHER_ID = "afa1052b-8226-438c-895e-335dcf21743a"
+
+# The GEO question our changelog answers. `engine publish` requires one; we
+# look for this text first and create it if missing so the script is idempotent.
+GEO_QUESTION_TEXT = "What does Gardener correct in its memory and how?"
+GEO_QUESTION_TYPE = "consideration"
+
+
+def _senso(*args: str) -> subprocess.CompletedProcess:
+    """Run a `senso` CLI command with JSON output, capturing stdout/stderr."""
+    cmd = ["senso", "--output", "json", *args]
+    print(f"[senso_publish] running: senso {' '.join(args[:2])} ...")
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def _parse_json(stdout: str) -> dict:
+    """Extract the JSON object the CLI prints after its banner line."""
+    start = stdout.find("{")
+    if start == -1:
+        return {}
+    try:
+        return json.loads(stdout[start:])
+    except json.JSONDecodeError:
+        return {}
+
+
+def ensure_geo_question() -> str | None:
+    """Return a geo_question_id, reusing ours if it exists, else creating it."""
+    listed = _senso("questions", "list")
+    if listed.returncode == 0:
+        for q in _parse_json(listed.stdout).get("questions", []):
+            if q.get("question_text") == GEO_QUESTION_TEXT and q.get("geo_question_id"):
+                return q["geo_question_id"]
+
+    created = _senso(
+        "questions",
+        "create",
+        "--data",
+        json.dumps({"question_text": GEO_QUESTION_TEXT, "type": GEO_QUESTION_TYPE}),
+    )
+    if created.returncode != 0:
+        print(f"[senso_publish] could not create geo question:\n{created.stderr.strip()}")
+        return None
+    return _parse_json(created.stdout).get("geo_question_id")
+
+
+def ensure_cited_md_selected() -> None:
+    """Make Cited.md an active generation publisher (required before publish)."""
+    result = _senso(
+        "generate",
+        "update-settings",
+        "--data",
+        json.dumps(
+            {
+                "enable_content_generation": True,
+                "publishers": [CITED_MD_PUBLISHER_ID],
+            }
+        ),
+    )
+    if result.returncode != 0:
+        print(f"[senso_publish] note: could not select Cited.md:\n{result.stderr.strip()}")
 
 
 def publish_to_senso(changelog: str, title: str) -> bool:
@@ -189,22 +259,48 @@ def publish_to_senso(changelog: str, title: str) -> bool:
         )
         return False
 
-    # Per docs/senso-cited.md: create-raw puts it in the KB, engine publish
-    # is the magic command that actually puts it live on cited.md.
-    for cmd in (
-        ["senso", "kb", "create-raw", "--title", title, "--body", changelog],
-        ["senso", "engine", "publish"],
-    ):
-        print(f"[senso_publish] running: {' '.join(cmd[:4])} ...")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.stdout.strip():
-            print(result.stdout.strip())
-        if result.returncode != 0:
-            print(f"[senso_publish] command failed ({result.returncode}):")
-            if result.stderr.strip():
-                print(result.stderr.strip())
-            return False
-    print("[senso_publish] published — check cited.md/<your-handle>/")
+    geo_question_id = ensure_geo_question()
+    if not geo_question_id:
+        print("[senso_publish] no geo_question_id — cannot publish.")
+        return False
+
+    # Cited.md must be an active destination before `engine publish` will accept it.
+    ensure_cited_md_selected()
+
+    result = _senso(
+        "engine",
+        "publish",
+        "--publisher-ids",
+        CITED_MD_PUBLISHER_ID,
+        "--data",
+        json.dumps(
+            {
+                "geo_question_id": geo_question_id,
+                "raw_markdown": changelog,
+                "seo_title": title,
+                "summary": (
+                    "Gardener's self-linting memory loop: how it catches "
+                    "contradictions and publishes corrections with provenance."
+                ),
+            }
+        ),
+    )
+    if result.returncode != 0:
+        print(f"[senso_publish] engine publish failed ({result.returncode}):")
+        if result.stderr.strip():
+            print(result.stderr.strip())
+        return False
+
+    payload = _parse_json(result.stdout)
+    url = ""
+    for dest in payload.get("publish_destinations", []):
+        if dest.get("display_url"):
+            url = dest["display_url"]
+            break
+    if not url and payload.get("content_id"):
+        url = f"https://cited.md/article/{payload['content_id']}"
+
+    print(f"[senso_publish] published live to cited.md → {url or '(see content above)'}")
     return True
 
 
