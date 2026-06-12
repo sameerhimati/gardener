@@ -25,6 +25,14 @@ FINDINGS_JSONL = ROOT / "data" / "findings.jsonl"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Langfuse: globally instrument the Anthropic SDK so every LLM call (agent
+    # loop, core.llm) is traced. No-ops without LANGFUSE_* keys. Additive.
+    try:
+        from backend.core import tracing
+
+        tracing.init()
+    except Exception as e:
+        print(f"[app] warning: Langfuse init failed ({e}) — tracing disabled")
     try:
         if ch.configured():
             ch.init_schema()

@@ -6,3 +6,5 @@ clickhouse-connect
 python-dotenv
 httpx
 pydantic
+langfuse==4.7.1
+opentelemetry-instrumentation-anthropic==0.61.0

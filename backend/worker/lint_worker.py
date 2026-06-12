@@ -231,6 +231,21 @@ if __name__ == "__main__":
         load_dotenv(REPO_ROOT / ".env")
     except ImportError:
         pass
-    findings = run_lint()
-    auto = sum(1 for f in findings if f.get("status") == "auto_applied")
-    print(f"lint run complete: {len(findings)} finding(s), {auto} auto-applied")
+
+    # Langfuse: instrument the Anthropic SDK before any LLM call this run makes
+    # (rules + distiller go through core.llm). No-ops without LANGFUSE_* keys.
+    try:
+        from backend.core import tracing
+        tracing.init()
+    except Exception as exc:
+        print(f"[lint] Langfuse init failed ({exc}) — tracing disabled")
+        tracing = None
+
+    try:
+        findings = run_lint()
+        auto = sum(1 for f in findings if f.get("status") == "auto_applied")
+        print(f"lint run complete: {len(findings)} finding(s), {auto} auto-applied")
+    finally:
+        # Short-lived cron process: drain the trace queue or buffered spans are lost.
+        if tracing is not None:
+            tracing.flush()
