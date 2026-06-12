@@ -2,7 +2,8 @@
 // Every call fails soft: network failures flip a shared health flag that the UI
 // renders as a thin "backend offline" banner — nothing here ever crashes the app.
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// `||` not `??`: an empty NEXT_PUBLIC_API_URL exported by dev.sh must still fall back
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ---------- types ----------
 
@@ -162,4 +163,41 @@ export function rejectFinding(id: string): Promise<Finding> {
 
 export function runLint(): Promise<Finding[]> {
   return post<Finding[]>("/lint/run");
+}
+
+// ---------- onboarding ----------
+
+export interface PlantedFact {
+  topic: string;
+  fact: string;
+}
+
+export function distill(
+  text: string,
+  source = "onboarding",
+): Promise<{ written: PlantedFact[] }> {
+  return post<{ written: PlantedFact[] }>("/distill", { text, source });
+}
+
+export interface OnboardingTurn {
+  session_id: string;
+  reply: string;
+  written: PlantedFact[];
+}
+
+/** One conversational onboarding exchange — the real agent answers back. */
+export function onboardingTurn(
+  sessionId: string | null,
+  message: string,
+  question: string,
+): Promise<OnboardingTurn> {
+  return post<OnboardingTurn>("/onboarding/turn", {
+    ...(sessionId ? { session_id: sessionId } : {}),
+    message,
+    question,
+  });
+}
+
+export function createWatch(task: string): Promise<Watch> {
+  return post<Watch>("/watches", { task });
 }

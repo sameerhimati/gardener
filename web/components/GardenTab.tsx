@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { getVault, getVaultFile, type VaultFile, type VaultFileMeta } from "@/lib/api";
 import { relativeTime, usePolling } from "@/lib/hooks";
 import { Markdown } from "@/lib/markdown";
@@ -74,7 +75,7 @@ export default function GardenTab() {
             key={f.path}
             onClick={() => setSelectedPath(f.path)}
             className={`block w-full px-4 py-2 text-left transition-colors ${
-              flashing.has(f.path) ? "animate-row-flash" : ""
+              flashing.has(f.path) ? "animate-moss-sweep" : ""
             } ${
               selectedPath === f.path ? "bg-raised" : "hover:bg-hover"
             }`}
@@ -93,15 +94,25 @@ export default function GardenTab() {
         ))}
       </div>
 
-      {/* file content */}
+      {/* file content — crossfades when a different file is selected */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {file ? (
-          <Markdown text={file.content} provenance />
-        ) : (
-          <p className="text-xs text-dim">
-            {selectedPath ? "…" : "Select a file to read it."}
-          </p>
-        )}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={selectedPath ?? "none"}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+          >
+            {file ? (
+              <Markdown text={file.content} provenance />
+            ) : (
+              <p className="text-xs text-dim">
+                {selectedPath ? "…" : "Select a file to read it."}
+              </p>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   );

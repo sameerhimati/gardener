@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import {
   getMessages,
   runWatch,
@@ -11,6 +12,7 @@ import {
 } from "@/lib/api";
 import { relativeTime, usePolling } from "@/lib/hooks";
 import { Markdown } from "@/lib/markdown";
+import ThinkingDots from "@/components/ThinkingDots";
 
 const MAIN_SESSION_KEY = "gardener_main_session_id";
 
@@ -23,19 +25,28 @@ function Bubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
   if (isUser) {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-moss-deep/30 px-4 py-2.5 text-sm leading-relaxed text-ink whitespace-pre-wrap">
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
+        className="flex justify-end"
+      >
+        <div className="max-w-[78%] rounded-xl bg-moss/10 px-4 py-2.5 text-sm leading-relaxed text-ink whitespace-pre-wrap">
           {message.content}
         </div>
-      </div>
+      </motion.div>
     );
   }
+  // Assistant replies sit plain on the page, like a document.
   return (
-    <div className="flex justify-start">
-      <div className="max-w-[78%] rounded-2xl rounded-bl-sm border border-edge bg-raised px-4 py-2.5">
-        <Markdown text={message.content} />
-      </div>
-    </div>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className="py-1 pr-6"
+    >
+      <Markdown text={message.content} />
+    </motion.div>
   );
 }
 
@@ -91,7 +102,7 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
   const messageCount = messages.length;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messageCount, selected]);
+  }, [messageCount, selected, sending]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -184,7 +195,7 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
           <button
             onClick={onRunNow}
             disabled={runningNow}
-            className="shrink-0 rounded-md border border-edge px-3 py-1.5 text-xs text-faint transition-colors hover:border-moss-deep hover:text-moss disabled:opacity-50"
+            className="shrink-0 rounded-md border border-edge px-3 py-1.5 text-xs text-faint transition-colors hover:border-moss/50 hover:text-moss disabled:opacity-50"
           >
             {runningNow ? "Running…" : "Run now"}
           </button>
@@ -200,6 +211,16 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
             {messages.map((m, i) => (
               <Bubble key={`${m.ts}-${i}`} message={m} />
             ))}
+            {sending && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.25, delay: 0.2 }}
+                className="py-1"
+              >
+                <ThinkingDots />
+              </motion.div>
+            )}
             <div ref={bottomRef} />
           </div>
         )}
@@ -220,7 +241,7 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
               </span>
             )}
           </div>
-          <div className="flex items-end gap-2 rounded-xl border border-edge bg-surface px-3 py-2 focus-within:border-moss-deep">
+          <div className="flex items-end gap-2 rounded-xl border border-edge bg-bg px-3 py-2 shadow-sm transition-colors focus-within:border-moss/50">
             <textarea
               rows={1}
               value={input}
@@ -241,7 +262,7 @@ export default function ChatPane({ selected, watch }: ChatPaneProps) {
             <button
               onClick={send}
               disabled={sending || input.trim() === ""}
-              className="shrink-0 rounded-lg bg-moss-deep px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-moss-deep/80 disabled:opacity-40"
+              className="shrink-0 rounded-lg bg-moss px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-moss-deep disabled:opacity-40"
             >
               {sending ? "…" : "Send"}
             </button>

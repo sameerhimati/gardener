@@ -251,6 +251,53 @@ def _resolve_finding(finding_id: str, action: str):
     raise HTTPException(status_code=503, detail=f"lint worker has no {action}_finding yet")
 
 
+# ── onboarding (interactive: the interview IS the agent) ────────────────────
+
+class OnboardingIn(BaseModel):
+    session_id: str | None = None
+    message: str
+    question: str = ""  # the interview question currently on screen
+
+
+@app.post("/onboarding/turn")
+def onboarding_turn(body: OnboardingIn):
+    """One interactive onboarding exchange: the real agent replies (it can answer
+    questions back), and the answer is distilled into the vault in the same call."""
+    session_id = body.session_id or store.create_session(kind="onboarding", title="Onboarding")
+    system = prompts.ONBOARDING
+    if body.question:
+        system += f'\n\nThe interview question on screen: "{body.question}"'
+    reply = _run_turn(session_id, body.message, system)
+
+    planted = []
+    try:
+        from backend.watches import runner
+
+        planted = runner.distill_text(body.message, source="onboarding")
+    except Exception as e:
+        print(f"[app] warning: onboarding distill failed: {e}")
+    return {"session_id": session_id, "reply": reply, "written": planted}
+
+
+# ── distill (onboarding + any free text → preference vault) ─────────────────
+
+class DistillIn(BaseModel):
+    text: str
+    source: str = "onboarding"
+
+
+@app.post("/distill")
+def distill(body: DistillIn):
+    events.log_event("user_msg", {"text": body.text, "source": body.source})
+    try:
+        from backend.watches import runner
+
+        return {"written": runner.distill_text(body.text, body.source)}
+    except Exception as e:
+        print(f"[app] warning: distill failed: {e}")
+        return {"written": [], "error": str(e)}
+
+
 # ── events ───────────────────────────────────────────────────────────────────
 
 @app.get("/events/recent")

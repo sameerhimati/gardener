@@ -168,6 +168,18 @@ def _save_preference(topic: str, fact: str, session_id: str) -> str:
 # ── spawn_watch ──────────────────────────────────────────────────────────────
 
 def _spawn_watch(task: str, cadence_sec: int, session_id: str) -> str:
+    # A watch must never spawn watches: its own task text reads like a watch
+    # request, so an unguarded model re-spawns itself every cycle (exponential
+    # junk chats). Only the orchestrator (main chat) may plant new watches.
+    if any(w.get("session_id") == session_id for w in store.list_watches()):
+        return (
+            "DENIED: you are a standing watch — you cannot spawn other watches. "
+            "Just run your check and report."
+        )
+    # Near-duplicate guard: same task text already being watched.
+    for w in store.list_watches():
+        if w.get("status") == "active" and w.get("task", "").strip().lower() == task.strip().lower():
+            return f"NOT SPAWNED: an active watch with this exact task already exists ({w['id']})."
     watch = store.create_watch(task, cadence_sec)
     events.log_event(
         "watch_spawn",

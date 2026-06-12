@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   applyFinding,
   rejectFinding,
@@ -12,9 +13,9 @@ import { relativeTime } from "@/lib/hooks";
 import DiffView from "@/components/DiffView";
 
 const STATUS_STYLES: Record<FindingStatus, string> = {
-  open: "border-amber/50 text-amber",
-  auto_applied: "border-moss-deep text-moss",
-  approved: "border-moss-deep text-moss",
+  open: "border-amber/40 text-amber",
+  auto_applied: "border-moss/30 text-moss",
+  approved: "border-moss/30 text-moss",
   rejected: "border-edge text-dim",
 };
 
@@ -27,13 +28,18 @@ const STATUS_LABELS: Record<FindingStatus, string> = {
 
 function FindingCard({
   finding,
+  index,
   onResolved,
 }: {
   finding: Finding;
+  index: number;
   onResolved: () => void;
 }) {
   const [diffOpen, setDiffOpen] = useState(false);
   const [busy, setBusy] = useState<"apply" | "reject" | null>(null);
+  // Set after a successful Apply — washes the card moss before it settles
+  // into its applied state.
+  const [justApplied, setJustApplied] = useState(false);
 
   const act = useCallback(
     async (action: "apply" | "reject") => {
@@ -42,6 +48,7 @@ function FindingCard({
       try {
         if (action === "apply") await applyFinding(finding.id);
         else await rejectFinding(finding.id);
+        if (action === "apply") setJustApplied(true);
         onResolved();
       } catch {
         // fail soft — banner handles it
@@ -57,9 +64,20 @@ function FindingCard({
   const statusLabel = STATUS_LABELS[finding.status] ?? finding.status;
 
   return (
-    <article className="rounded-lg border border-edge bg-surface p-3">
+    <motion.article
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.3,
+        ease: "easeOut",
+        delay: Math.min(index, 6) * 0.05,
+      }}
+      className={`rounded-lg border border-edge bg-bg p-3 ${
+        justApplied ? "animate-moss-wash" : ""
+      }`}
+    >
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="rounded border border-moss-deep/60 bg-moss-deep/15 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-moss">
+        <span className="rounded border border-moss/25 bg-moss/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-moss">
           {finding.rule}
         </span>
         <span
@@ -85,11 +103,21 @@ function FindingCard({
           >
             {diffOpen ? "▾ hide diff" : "▸ show diff"}
           </button>
-          {diffOpen && (
-            <div className="mt-1.5">
-              <DiffView diff={finding.diff} />
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {diffOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+                className="overflow-hidden"
+              >
+                <div className="mt-1.5">
+                  <DiffView diff={finding.diff} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
 
@@ -98,20 +126,20 @@ function FindingCard({
           <button
             onClick={() => act("apply")}
             disabled={busy !== null}
-            className="rounded-md bg-moss-deep px-3 py-1 text-xs font-medium text-ink transition-colors hover:bg-moss-deep/80 disabled:opacity-50"
+            className="rounded-md bg-moss px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-moss-deep disabled:opacity-50"
           >
             {busy === "apply" ? "Applying…" : "Apply"}
           </button>
           <button
             onClick={() => act("reject")}
             disabled={busy !== null}
-            className="rounded-md border border-edge px-3 py-1 text-xs text-faint transition-colors hover:border-rust/60 hover:text-rust disabled:opacity-50"
+            className="rounded-md border border-edge px-3 py-1 text-xs text-faint transition-colors hover:border-rust/40 hover:text-rust disabled:opacity-50"
           >
             {busy === "reject" ? "Rejecting…" : "Reject"}
           </button>
         </div>
       )}
-    </article>
+    </motion.article>
   );
 }
 
@@ -152,7 +180,7 @@ export default function LintTab({
         <button
           onClick={onRunLint}
           disabled={linting}
-          className="rounded-md border border-edge px-2.5 py-1 text-xs text-faint transition-colors hover:border-moss-deep hover:text-moss disabled:opacity-50"
+          className="rounded-md border border-edge px-2.5 py-1 text-xs text-faint transition-colors hover:border-moss/50 hover:text-moss disabled:opacity-50"
         >
           {linting ? "Linting…" : "Run lint now"}
         </button>
@@ -169,8 +197,8 @@ export default function LintTab({
             </p>
           </div>
         )}
-        {sorted?.map((f) => (
-          <FindingCard key={f.id} finding={f} onResolved={refresh} />
+        {sorted?.map((f, i) => (
+          <FindingCard key={f.id} finding={f} index={i} onResolved={refresh} />
         ))}
       </div>
     </div>

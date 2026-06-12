@@ -82,20 +82,27 @@ def _parse_distilled(raw: str) -> list[dict]:
 
 
 def distill_steering(watch_id: str, message: str) -> None:
-    """Distill a steering message into preference bullets in the vault.
+    """Distill a steering message into preference bullets in the vault."""
+    distill_text(message, source=f"watch:{watch_id}")
+
+
+def distill_text(text: str, source: str) -> list[dict]:
+    """Distill any user text (steering, onboarding answers) into the vault.
 
     Each {topic, fact} becomes a provenance-suffixed bullet appended to
     vault preferences/<topic>.md (created with frontmatter if missing).
+    Returns the list of {topic, fact} items written.
     """
     from backend.agent import prompts
     from backend.core import llm, vault
 
-    raw = llm.complete(message, system=prompts.DISTILLER)
+    raw = llm.complete(text, system=prompts.DISTILLER)
     items = _parse_distilled(raw)
     if not items:
-        return
+        return []
 
     today = _now().strftime("%Y-%m-%d")
+    written = []
     for item in items:
         topic = str(item.get("topic", "")).strip().lower().replace(" ", "-")
         fact = str(item.get("fact", "")).strip()
@@ -103,7 +110,7 @@ def distill_steering(watch_id: str, message: str) -> None:
             continue
 
         path = f"preferences/{topic}.md"
-        bullet = f"- {fact} (src: watch:{watch_id} {today})"
+        bullet = f"- {fact} (src: {source} {today})"
 
         try:
             content = vault.read(path)
@@ -116,7 +123,9 @@ def distill_steering(watch_id: str, message: str) -> None:
         # bump the frontmatter `updated:` date, keep everything else
         content = re.sub(r"(?m)^updated:.*$", f"updated: {today}", content, count=1)
         content = content.rstrip("\n") + "\n" + bullet + "\n"
-        vault.write(path, content, source=f"watch:{watch_id}")
+        vault.write(path, content, source=source)
+        written.append({"topic": topic, "fact": fact})
+    return written
 
 
 # ── scheduler ────────────────────────────────────────────────────────────────

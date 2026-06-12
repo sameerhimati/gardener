@@ -144,7 +144,13 @@ GET  /findings                                                → [Finding]
 POST /findings/{id}/apply | /findings/{id}/reject             → Finding
 POST /lint/run                                                → [Finding]      (manual trigger for demo)
 GET  /events/recent?limit=50                                  → [event]
+POST /distill                   {text, source?}               → {written: [{topic, fact}]}   (onboarding answers / any free text → vault)
+GET  /demo/listings  ·  POST /demo/listings/add               → demo fixture (docs/watch-layer.md)
 ```
+
+## UI direction (updated 12:40 PM per Sameer)
+
+Notion-like: **light mode default**, editorial, calm — generous whitespace, near-white background, ink text, moss green as the single accent. First run (no `gardener_onboarded` localStorage flag) opens **onboarding as a conversation-styled form**: Gardener asks ~4 questions one at a time (who are you / what are you actively looking for / what should I keep an eye on / hard preferences), each answer POSTs to `/distill`, the planted facts render as they land ("planted: …"), final step offers to create a watch from the answers and drops you into the app. Skippable.
 
 ## Steering → preference distillation
 

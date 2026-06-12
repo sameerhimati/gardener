@@ -30,7 +30,7 @@ function renderInline(text: string, provenance: boolean): React.ReactNode[] {
       out.push(
         <code
           key={key++}
-          className="rounded bg-raised px-1 py-px font-mono text-[0.85em] text-moss"
+          className="rounded bg-raised/60 px-1 py-px font-mono text-[0.85em] text-moss-deep"
         >
           {token.slice(1, -1)}
         </code>,
@@ -44,7 +44,7 @@ function renderInline(text: string, provenance: boolean): React.ReactNode[] {
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-moss underline decoration-moss-deep underline-offset-2 hover:decoration-moss"
+          className="text-moss underline decoration-moss/40 underline-offset-2 hover:decoration-moss"
         >
           {label}
         </a>,

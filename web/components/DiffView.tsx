@@ -4,15 +4,15 @@
 export default function DiffView({ diff }: { diff: string }) {
   const lines = diff.replace(/\r\n/g, "\n").split("\n");
   return (
-    <pre className="overflow-x-auto rounded-md border border-edge bg-bg font-mono text-xs leading-5">
+    <pre className="overflow-x-auto rounded-md border border-edge bg-surface font-mono text-xs leading-5">
       {lines.map((line, i) => {
         let cls = "text-faint";
         if (line.startsWith("+++") || line.startsWith("---")) {
           cls = "text-dim";
         } else if (line.startsWith("@@")) {
-          cls = "text-moss-deep";
+          cls = "text-dim";
         } else if (line.startsWith("+")) {
-          cls = "bg-moss/10 text-moss";
+          cls = "bg-moss/10 text-moss-deep";
         } else if (line.startsWith("-")) {
           cls = "bg-rust/10 text-rust";
         }

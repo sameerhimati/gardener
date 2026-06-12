@@ -14,7 +14,10 @@ DEFAULT_PIONEER_BASE_URL = "https://api.pioneer.ai/v1"
 
 def complete(prompt: str, system: str = "", model: str | None = None) -> str:
     if os.environ.get("PIONEER_API_KEY"):
-        return _complete_pioneer(prompt, system, model)
+        try:
+            return _complete_pioneer(prompt, system, model)
+        except Exception as e:  # e.g. card_verification_required — never let Pioneer block lint
+            print(f"[llm] warning: Pioneer failed ({e}); falling back to Anthropic")
     return _complete_anthropic(prompt, system, model)
 
 

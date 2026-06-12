@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import type { Watch } from "@/lib/api";
 import { relativeTime } from "@/lib/hooks";
+import { ONBOARDED_KEY } from "@/components/Onboarding";
 
 interface SidebarProps {
   watches: Watch[] | null;
@@ -50,7 +52,7 @@ export default function Sidebar({ watches, selected, onSelect }: SidebarProps) {
           changed.forEach((id) => next.delete(id));
           return next;
         });
-      }, 4500);
+      }, 1700);
       return () => clearTimeout(timer);
     }
   }, [watches]);
@@ -93,9 +95,14 @@ export default function Sidebar({ watches, selected, onSelect }: SidebarProps) {
           </p>
         )}
 
+        <AnimatePresence initial={false}>
         {watches?.map((w) => (
-          <button
+          <motion.button
             key={w.id}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -10 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
             onClick={() => onSelect(w.id)}
             className={`group rounded-md px-3 py-2 text-left transition-colors ${
               selected === w.id
@@ -123,12 +130,31 @@ export default function Sidebar({ watches, selected, onSelect }: SidebarProps) {
                 </span>
               </span>
             </span>
-          </button>
+          </motion.button>
         ))}
+        </AnimatePresence>
       </nav>
 
-      <div className="border-t border-edge px-4 py-3 text-[11px] text-dim">
-        memory that gardens itself
+      <div className="border-t border-edge px-2 py-2">
+        {/* demo affordance: clear the onboarded flag and replay the interview */}
+        <button
+          onClick={() => {
+            localStorage.removeItem(ONBOARDED_KEY);
+            window.location.reload();
+          }}
+          className="group/replant flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim transition-colors hover:bg-hover hover:text-faint"
+        >
+          <span aria-hidden className="text-[13px] leading-none">
+            ↺
+          </span>
+          Replant
+          <span className="ml-auto text-[10px] opacity-0 transition-opacity group-hover/replant:opacity-100">
+            replay onboarding
+          </span>
+        </button>
+        <p className="px-2 pb-1 pt-1.5 text-[11px] text-dim">
+          memory that gardens itself
+        </p>
       </div>
     </aside>
   );
