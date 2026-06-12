@@ -1,0 +1,32 @@
+# env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# node
+node_modules/
+.next/
+out/
+dist/
+
+# local data
+data/
+*.jsonl
+
+# local-only context (personal notes — not for the public repo)
+CLAUDE.local.md
+session-handoff.md
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
