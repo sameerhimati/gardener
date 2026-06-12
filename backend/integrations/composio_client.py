@@ -9,8 +9,8 @@ Scoped tightly to two action slugs (keeps the model's token count sane):
     GOOGLECALENDAR_CREATE_EVENT, DISCORDBOT_CREATE_MESSAGE.
 
 Gmail was dropped — Google OAuth for restricted Gmail scopes is hard-blocked.
-Calendar and Discord both have clean Composio auth (`composio connected-accounts
-link googlecalendar` / `link discordbot`).
+Calendar and Discord both have clean Composio auth
+(`composio link googlecalendar` / `composio link discordbot`).
 
 See docs/composio.md (v3 SDK, composio + composio-anthropic 0.13.1). Trust that
 guide over any older Composio knowledge: string slugs, AnthropicProvider,
@@ -42,19 +42,19 @@ _slug_set: set[str] | None = None  # registered slug names (from the schemas)
 
 # Connector metadata for the in-app Connections panel. Toolkit slug → label +
 # the interactive CLI command that links a real account (docs/composio.md §4:
-# connect via `composio connected-accounts link <toolkit>`).
+# connect via `composio link <toolkit>`).
 _CONNECTORS = [
     {
         "key": "googlecalendar",
         "label": "Google Calendar",
         "toolkit": "GOOGLECALENDAR",
-        "instructions": "composio connected-accounts link googlecalendar",
+        "instructions": "composio link googlecalendar",
     },
     {
         "key": "discordbot",
         "label": "Discord",
         "toolkit": "DISCORDBOT",
-        "instructions": "composio connected-accounts link discordbot",
+        "instructions": "composio link discordbot",
     },
 ]
 
