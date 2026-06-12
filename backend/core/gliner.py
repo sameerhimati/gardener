@@ -39,6 +39,44 @@ _RENDER = {
 }
 
 
+# Housing-domain gate. This model is HOUSING-ONLY — every label renders to the
+# "housing" topic — but distill_text feeds it ALL onboarding/steering text. Run
+# it on non-housing text and it mislabels: GPU "$500" -> "Budget up to $500",
+# stock "165" -> "Wants at least 165 sqft", bare zip "94115" -> a neighborhood.
+# So we only fire when the text is clearly housing-domain; otherwise return None
+# and let the general LLM distiller handle it. Precision over recall: when in
+# doubt, gate OUT (return None) — the LLM path is the safe default.
+_HOUSING_TERMS = (
+    "house", "home", "homes", "housing", "bedroom", "bed ", "beds",
+    "bathroom", "bath ", "baths", "sqft", "sq ft", "square feet", "square foot",
+    "neighborhood", "neighbourhood", "zillow", "redfin", "trulia", "realtor",
+    "apartment", "condo", "townhouse", "townhome", "duplex", "rent", "rental",
+    "lease", "mortgage", "hoa", "listing", "realty", "real estate", "property",
+    "zip code", "zipcode", "zip ", "postal code", "studio", "loft",
+    "move in", "move-in", "for sale", "open house", "broker", "landlord",
+)
+# Word-ish patterns where a bare substring would false-match (e.g. "bed" in
+# "embedding"). Matched on token boundaries instead.
+_HOUSING_WORDS = (
+    "bed", "beds", "bath", "baths", "house", "home", "homes", "rent",
+    "lease", "condo", "loft", "studio", "zip", "zipcode", "hoa",
+)
+
+
+def is_housing_text(text: str) -> bool:
+    """True only when text is clearly housing-domain. Conservative gate in
+    front of the housing-only extractor; non-housing text -> False -> caller
+    falls back to the safe LLM distiller."""
+    if not text:
+        return False
+    low = text.lower()
+    if any(term in low for term in _HOUSING_TERMS):
+        return True
+    # token-boundary check for short words that substring-match too eagerly
+    tokens = set(re.findall(r"[a-z]+", low))
+    return any(w in tokens for w in _HOUSING_WORDS)
+
+
 def model_id() -> str | None:
     return os.environ.get("GLINER_MODEL_ID") or None
 
@@ -108,6 +146,11 @@ def extract(text: str) -> list[dict] | None:
     signal the caller to fall back to the LLM distiller."""
     mid = model_id()
     if not mid:
+        return None
+    # Housing-only model: only fire on clearly housing-domain text, else the
+    # LLM distiller handles it. Prevents mislabeling GPU/stock/zip answers as
+    # housing facts (see _HOUSING_TERMS note above).
+    if not is_housing_text(text):
         return None
     try:
         r = httpx.post(
