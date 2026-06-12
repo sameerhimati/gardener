@@ -40,7 +40,15 @@ def run_cycle(watch_id: str) -> dict:
     from backend.core import events, store
 
     watch = store.get_watch(watch_id)
-    cycle_prompt = f"Task: {watch['task']}\nRun one check now and report."
+    act_mode = watch.get("act_mode", "off")
+    cycle_prompt = (
+        f"Task: {watch['task']}\n"
+        f"act_mode: {act_mode}\n"
+        "Run one check now and report. If — and only if — you find a GENUINE, "
+        "confident match, act per act_mode (draft = create a Gmail draft / "
+        "tentative calendar event with the link, never send; send = send a "
+        "concise alert email; off = report only). Never act on a no-result cycle."
+    )
 
     reply = _run_agent_turn(watch["session_id"], cycle_prompt, prompts.WATCH_RUNNER)
 

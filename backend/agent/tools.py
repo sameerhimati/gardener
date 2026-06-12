@@ -12,6 +12,7 @@ import re
 from datetime import date, datetime, timezone
 
 from backend.core import events, store, vault
+from backend.integrations import composio_client
 
 TOOLS: list[dict] = [
     {
@@ -76,6 +77,11 @@ TOOLS: list[dict] = [
             "properties": {
                 "task": {"type": "string", "description": "What to watch, in plain language, including sources if known"},
                 "cadence_sec": {"type": "integer", "description": "Seconds between cycles (default 120)"},
+                "act_mode": {
+                    "type": "string",
+                    "enum": ["draft", "send", "off"],
+                    "description": "What this watch does on a GENUINE match: 'draft' = create a Gmail draft / tentative calendar event (never sends; use for high-stakes or personal actions like emailing about a house); 'send' = send a concise alert email (use for time-sensitive low-stakes alerts like a price drop); 'off' = report only, take no action (default; pure monitoring).",
+                },
             },
             "required": ["task"],
         },
@@ -86,6 +92,14 @@ TOOLS: list[dict] = [
         "input_schema": {"type": "object", "properties": {}},
     },
 ]
+
+# Append the scoped Composio (Gmail + Calendar) tool schemas at import. Wrapped
+# so an import/network failure is swallowed and TOOLS still carries the built-in
+# tools — graceful degradation: with no COMPOSIO_API_KEY this is just a no-op.
+try:
+    TOOLS.extend(composio_client.tool_schemas())
+except Exception as _e:  # noqa: BLE001
+    print(f"[tools] Composio schemas not loaded ({_e}); built-in tools only")
 
 
 def execute_tool(name: str, tool_input: dict, session_id: str) -> str:
@@ -122,9 +136,18 @@ def _dispatch(name: str, tool_input: dict, session_id: str) -> str:
     if name == "save_preference":
         return _save_preference(tool_input["topic"], tool_input["fact"], session_id)
     if name == "spawn_watch":
-        return _spawn_watch(tool_input["task"], int(tool_input.get("cadence_sec") or 120), session_id)
+        return _spawn_watch(
+            tool_input["task"],
+            int(tool_input.get("cadence_sec") or 120),
+            session_id,
+            act_mode=tool_input.get("act_mode") or "off",
+        )
     if name == "list_watches":
         return json.dumps(store.list_watches(), indent=2, default=str)
+    # Composio (Gmail/Calendar) tools dispatch here, still inside execute_tool's
+    # event-logging wrapper — so the action shows up in the activity trail.
+    if composio_client.is_composio_tool(name):
+        return composio_client.execute(name, tool_input, user_id=composio_client.USER_ID)
     return f"ERROR: unknown tool: {name}"
 
 
@@ -209,7 +232,7 @@ def _save_preference(topic: str, fact: str, session_id: str) -> str:
 
 # ── spawn_watch ──────────────────────────────────────────────────────────────
 
-def _spawn_watch(task: str, cadence_sec: int, session_id: str) -> str:
+def _spawn_watch(task: str, cadence_sec: int, session_id: str, act_mode: str = "off") -> str:
     # A watch must never spawn watches: its own task text reads like a watch
     # request, so an unguarded model re-spawns itself every cycle (exponential
     # junk chats). Only the orchestrator (main chat) may plant new watches.
@@ -222,14 +245,15 @@ def _spawn_watch(task: str, cadence_sec: int, session_id: str) -> str:
     for w in store.list_watches():
         if w.get("status") == "active" and w.get("task", "").strip().lower() == task.strip().lower():
             return f"NOT SPAWNED: an active watch with this exact task already exists ({w['id']})."
-    watch = store.create_watch(task, cadence_sec)
+    act_mode = act_mode if act_mode in ("draft", "send", "off") else "off"
+    watch = store.create_watch(task, cadence_sec, act_mode=act_mode)
     events.log_event(
         "watch_spawn",
         {"watch_id": watch["id"], "task": task, "cadence_sec": cadence_sec,
-         "ts": datetime.now(timezone.utc).isoformat()},
+         "act_mode": act_mode, "ts": datetime.now(timezone.utc).isoformat()},
         session_id,
     )
     return json.dumps(
         {"watch_id": watch["id"], "session_id": watch["session_id"], "task": task,
-         "cadence_sec": cadence_sec, "status": watch["status"]},
+         "cadence_sec": cadence_sec, "act_mode": act_mode, "status": watch["status"]},
     )

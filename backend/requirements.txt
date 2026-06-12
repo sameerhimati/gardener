@@ -1,6 +1,8 @@
 fastapi
 uvicorn[standard]
 anthropic
+composio
+composio-anthropic==0.13.1
 openai
 clickhouse-connect
 python-dotenv

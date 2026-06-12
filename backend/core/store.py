@@ -69,12 +69,19 @@ def append_message(session_id: str, role: str, content: str) -> None:
 
 # ── watches ──────────────────────────────────────────────────────────────────
 
-def create_watch(task: str, cadence_sec: int = 120) -> dict:
+def create_watch(task: str, cadence_sec: int = 120, act_mode: str = "off") -> dict:
     session_id = create_session(kind="watch", title=task[:80])
+    # act_mode controls what a watch does on a genuine match:
+    #   "off"  -> report only (default; no existing watch ever auto-acts)
+    #   "draft"-> create a Gmail draft / tentative calendar event, never send
+    #   "send" -> send a concise alert email
+    if act_mode not in ("draft", "send", "off"):
+        act_mode = "off"
     watch = {
         "id": f"w_{uuid.uuid4().hex[:12]}",
         "task": task,
         "cadence_sec": cadence_sec,
+        "act_mode": act_mode,
         "session_id": session_id,
         "status": "active",
         "created": _now(),
